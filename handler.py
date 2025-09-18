@@ -76,8 +76,6 @@ class SceneHandler:
         mesh["groups"] = groups
         mesh["face_ids"] = face_ids
 
-        mesh.update()
-
         safe_loop_normals(mesh, indices, normals)
 
         self.update_pivot(obj)
@@ -450,7 +448,7 @@ def safe_loop_normals(mesh, indices, normals):
     mesh.attributes.new("temp_custom_normals", 'FLOAT_VECTOR', 'CORNER')
     mesh.attributes["temp_custom_normals"].data.foreach_set("vector", normals.reshape(-1, 3)[indices].ravel())
 
-    mesh.update()
+    mesh.validate(clean_customdata=False) 
 
     buf = np.empty(len(mesh.loops) * 3, dtype=np.float32)
     mesh.attributes["temp_custom_normals"].data.foreach_get("vector", buf)
@@ -459,3 +457,5 @@ def safe_loop_normals(mesh, indices, normals):
 
     mesh.normals_split_custom_set(buf.reshape(-1, 3))
     mesh.attributes.remove(mesh.attributes["temp_custom_normals"])
+
+    mesh.update()
