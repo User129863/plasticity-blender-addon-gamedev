@@ -21,7 +21,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Refacet UI quality of life: Tri/Ngon stored in presets; simple Tolerance/Angle fields always visible; Advanced is a pure toggle for extra settings.
 - Refresh filtering: new toggles for "Only selected objects in Blender" and "Only visible in Plasticity"; enable either or both to constrain refresh to selected Blender objects, visible Plasticity items, or their intersection.
 - UI reorganization: compact, collapsible sections to reduce panel height and speed scanning during production.
-- Select Similar Geometry: fuzzy match by vertex/poly counts and total surface area relative to the active object; ignores transforms/materials. Useful when instances exist in Plasticity but are not exposed to Blender: approximate, but better than nothing.
+- Select Similar Geometry: fuzzy match by vertex/poly counts and total surface area relative to the active object; ignores transforms/materials. Useful for quickly grabbing similar meshes; approximate and may include false positives.
 - Join Selected: join selected objects into the active object. Destructive.
 - Unjoin Selected: separate selected meshes by loose parts; creates new objects and may change names.
 - Select Meshes with Ngons: scan the scene and select meshes that contain ngons (>4 vertices).
@@ -32,6 +32,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Merge Non-overlapping Meshes: supports selection-only vs visible objects, with threshold exposed in the redo panel; optimized overlap checks (AABB fast reject + KDTree distance checks, name-based resolution to avoid stale refs); useful for batching and for baking workflows that use bevel-shader techniques, but can increase bake times in Blender.
 - UV workflow tools: open/close UV editor, select meshes without UVs, remove UVs, and material/texture cleanup grouped together.
 - Import/export utilities: FBX and OBJ import/export with modern operator support and legacy fallback.
+
 
 
 
