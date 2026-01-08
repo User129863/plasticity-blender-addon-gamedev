@@ -19,7 +19,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Fillet-aware selection in Select Plasticity Face(s): optional adjacent-fillet mode expands selection by curvature/area thresholds; vertex adjacency helps bridge tight corners; setting Min Curvature Angle to 0 includes chamfers.
 - Refacet presets for game-ready topology control: save per-object remesh parameters to control mesh density and edge/silhouette fidelity, useful for consistent edge control and poly-budget management on CAD-derived meshes.
 - Refacet UI quality of life: Tri/Ngon stored in presets; simple Tolerance/Angle fields always visible; Advanced is a pure toggle for extra settings.
-- Refresh filtering: new toggle to limit refresh to only selected objects in Blender; "Only visible in Plasticity" label and behavior clarified.
+- Refresh filtering: new toggles for "Only selected objects in Blender" and "Only visible in Plasticity"; enable either or both to constrain refresh to selected Blender objects, visible Plasticity items, or their intersection.
 - UI reorganization: compact, collapsible sections to reduce panel height and speed scanning during production.
 - Select Similar Geometry: fuzzy match by vertex/poly counts and total surface area relative to the active object; ignores transforms/materials. Useful when instances exist in Plasticity but are not exposed to Blender: approximate, but better than nothing.
 - Join Selected: join selected objects into the active object. Destructive.
@@ -32,6 +32,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Merge Non-overlapping Meshes: supports selection-only vs visible objects, with threshold exposed in the redo panel; optimized overlap checks (AABB fast reject + KDTree distance checks, name-based resolution to avoid stale refs); useful for batching and for baking workflows that use bevel-shader techniques, but can increase bake times in Blender.
 - UV workflow tools: open/close UV editor, select meshes without UVs, remove UVs, and material/texture cleanup grouped together.
 - Import/export utilities: FBX and OBJ import/export with modern operator support and legacy fallback.
+
 
 
 
