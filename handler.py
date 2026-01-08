@@ -28,6 +28,7 @@ class SceneHandler:
         # NOTE: items/groups have overlapping ids
         # NOTE: it turns out that caching this is unsafe with undo/redo; call __prepare() before every update
         self.files = {}
+        self.list_filter_ids = None
 
     def __create_mesh(self, name, verts, indices, normals, groups, face_ids):
         mesh = bpy.data.meshes.new(name)
@@ -72,7 +73,7 @@ class SceneHandler:
 
         # NOTE: As of blender 4.2, the concrete type of user attributes cannot be numpy arrays.
         assert isinstance(groups, list)
-        assert isinstance(face_ids, list)  
+        assert isinstance(face_ids, list)
         mesh["groups"] = groups
         mesh["face_ids"] = face_ids
 
@@ -104,7 +105,6 @@ class SceneHandler:
                 "loop_start", range(0, len(new_indices), 3))
             mesh.polygons.foreach_set(
                 "loop_total", [3] * (len(new_indices) // 3))
-
             safe_loop_normals(mesh, indices, normals)
         else:
             # Find where a new face/polygon starts (value changes in the array)
@@ -117,16 +117,13 @@ class SceneHandler:
             mesh.polygons.add(len(loop_start))
             mesh.polygons.foreach_set("loop_start", loop_start)
             mesh.polygons.foreach_set("loop_total", loop_total)
-
             safe_loop_normals(mesh, indices, normals)
-
 
         # NOTE: As of blender 4.2, the concrete type of user attributes cannot be numpy arrays.
         assert isinstance(groups, list)
         assert isinstance(face_ids, list)
         mesh["groups"] = groups
         mesh["face_ids"] = face_ids
-
 
         self.update_pivot(obj)
 
@@ -324,7 +321,6 @@ class SceneHandler:
 
     def on_transaction(self, transaction):
         bpy.context.window_manager.plasticity_busy = False
-
         filename = transaction["filename"]
         version = transaction["version"]
 
@@ -350,7 +346,6 @@ class SceneHandler:
 
     def on_list(self, message):
         bpy.context.window_manager.plasticity_busy = False
-
         filename = message["filename"]
         version = message["version"]
 
@@ -360,36 +355,66 @@ class SceneHandler:
 
         inbox_collection = self.__prepare(filename)
 
+        filter_ids = self.list_filter_ids
+        selected_only = bool(filter_ids)
+        if filter_ids:
+            filter_ids = set(filter_ids)
+
+        add_items = message.get("add", [])
+        update_items = message.get("update", [])
+
         all_items = set()
         all_groups = set()
-        if "add" in message:
-            for item in message["add"]:
-                if item["type"] == ObjectType.GROUP.value:
-                    all_groups.add(item["id"])
-                else:
-                    all_items.add(item["id"])
+        for item in add_items + update_items:
+            if item["type"] == ObjectType.GROUP.value:
+                all_groups.add(item["id"])
+            else:
+                all_items.add(item["id"])
+
+        if selected_only:
+            filtered_add = [
+                item for item in add_items
+                if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
+            ]
+            filtered_update = [
+                item for item in update_items
+                if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
+            ]
+        else:
+            filtered_add = add_items
+            filtered_update = update_items
+
+        if filtered_add:
             self.__replace_objects(filename, inbox_collection,
-                                   version, message["add"])
+                                   version, filtered_add)
+        if filtered_update:
+            self.__replace_objects(filename, inbox_collection,
+                                   version, filtered_update)
 
-        to_delete = []
-        for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.ITEM].items():
-            if plasticity_id not in all_items:
-                to_delete.append(plasticity_id)
-        for plasticity_id in to_delete:
-            self.__delete_object(filename, version, plasticity_id)
+        if selected_only:
+            for plasticity_id in filter_ids:
+                if plasticity_id not in all_items:
+                    self.__delete_object(filename, version, plasticity_id)
+        else:
+            to_delete = []
+            for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.ITEM].items():
+                if plasticity_id not in all_items:
+                    to_delete.append(plasticity_id)
+            for plasticity_id in to_delete:
+                self.__delete_object(filename, version, plasticity_id)
 
-        to_delete = []
-        for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.GROUP].items():
-            if plasticity_id not in all_groups:
-                to_delete.append(plasticity_id)
-        for plasticity_id in to_delete:
-            self.__delete_group(filename, version, plasticity_id)
+            to_delete = []
+            for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.GROUP].items():
+                if plasticity_id not in all_groups:
+                    to_delete.append(plasticity_id)
+            for plasticity_id in to_delete:
+                self.__delete_group(filename, version, plasticity_id)
 
         bpy.ops.ed.undo_push(message="/Plasticity update")
+        self.list_filter_ids = None
 
     def on_refacet(self, filename, version, plasticity_ids, versions, faces, positions, indices, normals, groups, face_ids):
         bpy.context.window_manager.plasticity_busy = False
-
         self.report({'INFO'}, "Refaceting " + filename +
                     " to version " + str(version))
         bpy.ops.ed.undo_push(message="Plasticity refacet")
@@ -425,30 +450,32 @@ class SceneHandler:
         bpy.ops.ed.undo_push(message="/Plasticity refacet")
 
     def on_new_version(self, filename, version):
+        bpy.context.window_manager.plasticity_busy = False
         self.report({'INFO'}, "New version of " +
                     filename + " available: " + str(version))
 
     def on_new_file(self, filename):
+        bpy.context.window_manager.plasticity_busy = False
         self.report({'INFO'}, "New file available: " + filename)
 
     def on_connect(self):
         bpy.context.window_manager.plasticity_busy = False
-
         self.files = {}
 
     def on_disconnect(self):
         bpy.context.window_manager.plasticity_busy = False
-
         self.files = {}
 
     def report(self, level, message):
         print(message)
 
+
 def safe_loop_normals(mesh, indices, normals):
     mesh.attributes.new("temp_custom_normals", 'FLOAT_VECTOR', 'CORNER')
-    mesh.attributes["temp_custom_normals"].data.foreach_set("vector", normals.reshape(-1, 3)[indices].ravel())
+    mesh.attributes["temp_custom_normals"].data.foreach_set(
+        "vector", normals.reshape(-1, 3)[indices].ravel())
 
-    mesh.validate(clean_customdata=False) 
+    mesh.validate(clean_customdata=False)
 
     buf = np.empty(len(mesh.loops) * 3, dtype=np.float32)
     mesh.attributes["temp_custom_normals"].data.foreach_get("vector", buf)

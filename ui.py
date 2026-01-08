@@ -2,13 +2,15 @@ import bpy
 import math
 
 from .__init__ import plasticity_client
+from .__init__ import load_presets
 from .client import FacetShapeType
+
 
 
 class ConnectButton(bpy.types.Operator):
     bl_idname = "wm.connect_button"
     bl_label = "Connect"
-    bl_description = "Connect to the Plasticity server"
+    bl_description = "Connect to the Plasticity server at the configured address"
 
     @classmethod
     def poll(cls, context):
@@ -17,6 +19,10 @@ class ConnectButton(bpy.types.Operator):
     def execute(self, context):
         server = context.scene.prop_plasticity_server
         plasticity_client.connect(server)
+        
+        # Load the refacet presets after connecting (not ideal, but works for now).
+        load_presets(context.scene)
+        
         return {'FINISHED'}
 
 
@@ -38,7 +44,7 @@ class DisconnectButton(bpy.types.Operator):
 class ListButton(bpy.types.Operator):
     bl_idname = "wm.list"
     bl_label = "Refresh"
-    bl_description = "Refresh the list of available items"
+    bl_description = "Refresh the Plasticity object list (respects Only visible)"
 
     @classmethod
     def poll(cls, context):
@@ -48,6 +54,18 @@ class ListButton(bpy.types.Operator):
 
     def execute(self, context):
         only_visible = context.scene.prop_plasticity_list_only_visible
+        if context.scene.prop_plasticity_list_only_selected:
+            selected_ids = [
+                obj["plasticity_id"]
+                for obj in context.selected_objects
+                if obj.type == 'MESH' and "plasticity_id" in obj.keys()
+            ]
+            if selected_ids:
+                plasticity_client.handler.list_filter_ids = set(selected_ids)
+            else:
+                plasticity_client.handler.list_filter_ids = set()
+        else:
+            plasticity_client.handler.list_filter_ids = None
         if only_visible:
             plasticity_client.list_visible()
         else:
@@ -58,7 +76,7 @@ class ListButton(bpy.types.Operator):
 class SubscribeAllButton(bpy.types.Operator):
     bl_idname = "wm.subscribe_all"
     bl_label = "Subscribe All"
-    bl_description = "Subscribe to all available meshes"
+    bl_description = "Subscribe to all available meshes for live updates"
 
     @classmethod
     def poll(cls, context):
@@ -72,7 +90,7 @@ class SubscribeAllButton(bpy.types.Operator):
 class UnsubscribeAllButton(bpy.types.Operator):
     bl_idname = "wm.unsubscribe_all"
     bl_label = "Unsubscribe All"
-    bl_description = "Unsubscribe to all available meshes"
+    bl_description = "Stop live updates from Plasticity"
 
     @classmethod
     def poll(cls, context):
@@ -82,11 +100,10 @@ class UnsubscribeAllButton(bpy.types.Operator):
         plasticity_client.unsubscribe_all()
         return {'FINISHED'}
 
-
 class RefacetButton(bpy.types.Operator):
     bl_idname = "wm.refacet"
     bl_label = "Refacet"
-    bl_description = "Refacet the mesh"
+    bl_description = "Refacet selected Plasticity objects using current settings"
 
     @classmethod
     def poll(cls, context):
@@ -98,30 +115,53 @@ class RefacetButton(bpy.types.Operator):
         return any("plasticity_id" in obj.keys() for obj in context.selected_objects)
 
     def execute(self, context):
+
         context.window_manager.plasticity_busy = True
 
-        curve_chord_tolerance = context.scene.prop_plasticity_facet_tolerance
-        surface_plane_tolerance = context.scene.prop_plasticity_facet_tolerance
-        curve_chord_angle = context.scene.prop_plasticity_facet_angle
-        surface_plane_angle = context.scene.prop_plasticity_facet_angle
-        max_sides = 3 if context.scene.prop_plasticity_facet_tri_or_ngon == "TRI" else 128
+        if len(context.scene.refacet_presets) > 0:
+            preset = context.scene.refacet_presets[context.scene.active_refacet_preset_index]
+
+            curve_chord_tolerance = preset.tolerance
+            surface_plane_tolerance = preset.tolerance
+            curve_chord_angle = preset.angle
+            surface_plane_angle = preset.angle
+            facet_tri_or_ngon = preset.facet_tri_or_ngon
+        else:
+            curve_chord_tolerance = context.scene.prop_plasticity_facet_tolerance
+            surface_plane_tolerance = context.scene.prop_plasticity_facet_tolerance
+            curve_chord_angle = context.scene.prop_plasticity_facet_angle
+            surface_plane_angle = context.scene.prop_plasticity_facet_angle
+            facet_tri_or_ngon = context.scene.prop_plasticity_facet_tri_or_ngon
+
+        max_sides = 3 if facet_tri_or_ngon == "TRI" else 128
         plane_angle = math.pi / 4.0 if (max_sides > 4) else 0
 
         min_width = 0
         max_width = 0
         curve_chord_max = 0
-        if context.scene.prop_plasticity_ui_show_advanced_facet:
-            surface_plane_tolerance = context.scene.prop_plasticity_surface_plane_tolerance
-            surface_plane_angle = context.scene.prop_plasticity_surface_angle_tolerance
-            curve_chord_tolerance = context.scene.prop_plasticity_curve_chord_tolerance
-            curve_chord_angle = context.scene.prop_plasticity_curve_angle_tolerance
-            min_width = context.scene.prop_plasticity_facet_min_width
-            max_width = context.scene.prop_plasticity_facet_max_width
+
+        if context.scene.prop_plasticity_ui_show_advanced_facet:            
+            if len(context.scene.refacet_presets) > 0: 
+                surface_plane_tolerance = preset.Face_plane_tolerance
+                surface_plane_angle = preset.Face_Angle_tolerance
+                curve_chord_tolerance = preset.Edge_chord_tolerance
+                curve_chord_angle = preset.Edge_Angle_tolerance
+                min_width = preset.min_width
+                max_width = preset.max_width            
+            else:
+                surface_plane_tolerance = context.scene.prop_plasticity_surface_plane_tolerance
+                surface_plane_angle = context.scene.prop_plasticity_surface_angle_tolerance
+                curve_chord_tolerance = context.scene.prop_plasticity_curve_chord_tolerance            
+                curve_chord_angle = context.scene.prop_plasticity_curve_angle_tolerance                
+                min_width = context.scene.prop_plasticity_facet_min_width
+                max_width = context.scene.prop_plasticity_facet_max_width
             if max_width > 0 and max_width < min_width:
                 max_width = min_width
+                
             curve_chord_max = max_width * math.sqrt(0.5)
 
         plasticity_ids_by_filename = {}
+        
         for obj in context.selected_objects:
             if "plasticity_filename" in obj.keys():
                 if obj["plasticity_filename"] not in plasticity_ids_by_filename.keys():
@@ -146,7 +186,6 @@ class RefacetButton(bpy.types.Operator):
                                            shape=FacetShapeType.CUT)
 
         return {'FINISHED'}
-
 
 class PlasticityPanel(bpy.types.Panel):
     bl_idname = "OBJECT_PT_plasticity_panel"
@@ -176,13 +215,16 @@ class PlasticityPanel(bpy.types.Panel):
             layout.separator()
 
             box = layout.box()
-            box.prop(scene, "prop_plasticity_list_only_visible",
-                     text="Only visible")
             box.operator("wm.list", text="Refresh")
+            box.prop(scene, "prop_plasticity_list_only_visible",
+                     text="Only visible in Plasticity")
+            box.prop(scene, "prop_plasticity_list_only_selected",
+                     text="Only selected objects in Blender")
             box.prop(scene, "prop_plasticity_unit_scale",
                      text="Scale", slider=True)
 
             layout.separator()
+            
             if not plasticity_client.subscribed:
                 layout.operator("wm.subscribe_all", text="Live link")
             else:
@@ -190,44 +232,130 @@ class PlasticityPanel(bpy.types.Panel):
             layout.separator()
 
             box = layout.box()
-            refacet_op = box.operator("wm.refacet", text="Refacet")
-            box.label(text="Refacet config:")
+            box.prop(
+                scene,
+                "prop_plasticity_ui_show_refacet",
+                text="Refacet",
+                icon="TRIA_DOWN" if scene.prop_plasticity_ui_show_refacet else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if scene.prop_plasticity_ui_show_refacet:
+                col = box.column(align=True)
+                col.operator("wm.refacet", text="Refacet")
+                col.label(text="Refacet Presets")
+                
+                row = col.row()
+                row.template_list("OBJECT_UL_RefacetPresetsList", "refacet_presets", context.scene, "refacet_presets", context.scene, "active_refacet_preset_index")
+                
+                preset_col = row.column(align=True)
+                preset_col.operator("refacet_preset.add", icon='ADD', text="")
+                preset_col.operator("refacet_preset.remove", icon='REMOVE', text="")
+                
+                if len(scene.refacet_presets) > 0:
+                    preset = context.scene.refacet_presets[context.scene.active_refacet_preset_index]
+                    col.prop(preset, 'facet_tri_or_ngon', text="Tri or Ngon", expand=True)
+                else:
+                    col.prop(scene, "prop_plasticity_facet_tri_or_ngon", text="Tri or Ngon", expand=True)
 
-            box.prop(context.scene, "prop_plasticity_ui_show_advanced_facet",
-                     icon="TRIA_DOWN" if context.scene.prop_plasticity_ui_show_advanced_facet else "TRIA_RIGHT")
-            if context.scene.prop_plasticity_ui_show_advanced_facet:
-                box.prop(scene, "prop_plasticity_facet_tri_or_ngon",
-                         text="Tri or Ngon", expand=True)
-                box.prop(scene, "prop_plasticity_facet_min_width",
-                         text="Min width")
-                box.prop(scene, "prop_plasticity_facet_max_width",
-                         text="Max width", slider=False)
-                box.prop(scene, "prop_plasticity_curve_chord_tolerance",
-                         text="Edge Chord Tolerance")
-                box.prop(scene, "prop_plasticity_curve_angle_tolerance",
-                         text="Edge Angle Tolerance")
-                box.prop(scene, "prop_plasticity_surface_plane_tolerance",
-                         text="Face Plane Tolerance")
-                box.prop(scene, "prop_plasticity_surface_angle_tolerance",
-                         text="Face Angle Tolerance")
-            else:
-                box.prop(scene, "prop_plasticity_facet_tri_or_ngon",
-                         text="Tri or Ngon", expand=True)
-                box.prop(scene, "prop_plasticity_facet_tolerance",
-                         text="Tolerance")
-                box.prop(scene, "prop_plasticity_facet_angle",
-                         text="Angle")
-            layout.separator()
+                if len(scene.refacet_presets) > 0:
+                    col.prop(preset, 'tolerance', text="Tolerance")
+                    col.prop(preset, 'angle', text="Angle")
+                else:
+                    col.prop(scene, "prop_plasticity_facet_tolerance", text="Tolerance")
+                    col.prop(scene, "prop_plasticity_facet_angle", text="Angle")
+
+                col.prop(
+                    context.scene,
+                    "prop_plasticity_ui_show_advanced_facet",
+                    icon="TRIA_DOWN" if context.scene.prop_plasticity_ui_show_advanced_facet else "TRIA_RIGHT",
+                    toggle=True,
+                    text="Advanced Settings",
+                )
+                
+                if len(context.scene.refacet_presets) > 0:
+                    preset = context.scene.refacet_presets[context.scene.active_refacet_preset_index]
+                
+                if context.scene.prop_plasticity_ui_show_advanced_facet:
+                    adv_box = col.box()
+                    adv_col = adv_box.column(align=True)
+                    if len(scene.refacet_presets) > 0:
+                        adv_col.prop(preset, 'min_width', text="Min Width")
+                        adv_col.prop(preset, 'max_width', text="Max Width")
+                        adv_col.prop(preset, 'Edge_chord_tolerance', text="Edge Chord Tolerance")
+                        adv_col.prop(preset, 'Edge_Angle_tolerance', text="Edge Angle Tolerance")
+                        adv_col.prop(preset, 'Face_plane_tolerance', text="Face Plane Tolerance")
+                        adv_col.prop(preset, 'Face_Angle_tolerance', text="Face Angle Tolerance")
+                    else:
+                        adv_col.prop(scene, "prop_plasticity_facet_min_width", text="Min Width")
+                        adv_col.prop(scene, "prop_plasticity_facet_max_width", text="Max Width", slider=False)
+                        adv_col.prop(scene, "prop_plasticity_curve_chord_tolerance", text="Edge Chord Tolerance")
+                        adv_col.prop(scene, "prop_plasticity_curve_angle_tolerance", text="Edge Angle Tolerance")
+                        adv_col.prop(scene, "prop_plasticity_surface_plane_tolerance", text="Face Plane Tolerance")
+                        adv_col.prop(scene, "prop_plasticity_surface_angle_tolerance", text="Face Angle Tolerance")
 
             box = layout.box()
-            box.label(text="Utilities:")
+            box.prop(
+                scene,
+                "prop_plasticity_ui_show_utilities",
+                text="Plasticity Utilities",
+                icon="TRIA_DOWN" if scene.prop_plasticity_ui_show_utilities else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if scene.prop_plasticity_ui_show_utilities:
+                col = box.column(align=True)
+                col.operator("mesh.auto_mark_edges", text="Auto Mark Edges")
+                col.operator("mesh.merge_uv_seams", text="Merge UV Seams")
+                col.operator("mesh.select_by_plasticity_face_id",
+                             text="Select Plasticity Face(s)")
+                col.operator("mesh.select_by_plasticity_face_id_edge",
+                             text="Select Plasticity Edges")
+                col.operator("mesh.paint_plasticity_faces",
+                             text="Paint Plasticity Faces")
 
-            box.operator("mesh.auto_mark_edges", text="Auto Mark Edges")
-            box.operator("mesh.merge_uv_seams", text="Merge UV Seams")
+            box = layout.box()
+            box.prop(
+                scene,
+                "prop_plasticity_ui_show_uv_tools",
+                text="UV / Material / Texture Tools",
+                icon="TRIA_DOWN" if scene.prop_plasticity_ui_show_uv_tools else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if scene.prop_plasticity_ui_show_uv_tools:
+                col = box.column(align=True)
+                col.operator("object.open_uv_editor", text="Open Selected Inside UV Editor")
+                col.operator("object.close_uv_editor", text="Close UV Editor")
+                col.operator("object.select_without_uvs", text="Select Objects Without UVs")
+                col.operator("object.remove_uvs_from_selected", text="Remove UVs from Selected Objects")
+                col.operator("object.remove_materials", text="Remove Materials")
+                col.operator("object.reload_textures", text="Reload Textures")
 
-            box.operator("mesh.select_by_plasticity_face_id",
-                         text="Select Plasticity Face(s)")
-            box.operator("mesh.select_by_plasticity_face_id_edge",
-                         text="Select Plasticity Edges")
-            box.operator("mesh.paint_plasticity_faces",
-                         text="Paint Plasticity Faces")
+            box = layout.box()
+            box.prop(
+                scene,
+                "prop_plasticity_ui_show_mesh_tools",
+                text="Mesh Tools",
+                icon="TRIA_DOWN" if scene.prop_plasticity_ui_show_mesh_tools else "TRIA_RIGHT",
+                emboss=False,
+            )
+            if scene.prop_plasticity_ui_show_mesh_tools:
+                col = box.column(align=True)
+                col.operator("object.select_similar_geometry", text="Select Similar Geometry")
+                col.operator("object.join_selected", text="Join Selected")
+                col.operator("object.unjoin_selected", text="Unjoin Selected")
+                op = col.operator("object.merge_nonoverlapping_meshes", text="Merge Non-overlapping Meshes")
+                op.overlap_threshold = scene.overlap_threshold
+                row = col.row(align=True)
+                row.separator()
+                row.prop(scene, "overlap_threshold", text="Overlap Threshold")
+                col.operator("object.select_meshes_with_ngons", text="Select Meshes with Ngons")
+                col.operator("object.mirror", text="Mirror Selected")
+                col.prop(scene, "mirror_axis", text="Mirror Axis")
+                col.prop(scene, "mirror_center_object", text="Mirror Center")
+                col.operator("object.remove_modifiers", text="Remove Modifiers")
+                col.operator("object.apply_modifiers", text="Apply Modifiers")
+                col.operator("object.remove_vertex_groups", text="Remove Vertex Groups")
+                col.operator("object.snap_to_cursor", text="Snap to 3D Cursor")
+                col.operator("object.import_fbx", text="Import FBX")
+                col.operator("object.export_fbx", text="Export FBX")
+                col.operator("object.import_obj", text="Import OBJ")
+                col.operator("object.export_obj", text="Export OBJ")

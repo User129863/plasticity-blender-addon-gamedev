@@ -235,7 +235,7 @@ class PlasticityClient:
                 self.connected = True
                 self.message_id = 0
                 self.server = server
-                self.handler.on_connect()
+                bpy.app.timers.register(self.handler.on_connect, first_interval=0.001)
 
                 while True:
                     try:
@@ -252,7 +252,7 @@ class PlasticityClient:
                         self.websocket = None
                         self.filename = None
                         self.subscribed = False
-                        self.handler.on_disconnect()
+                        bpy.app.timers.register(self.handler.on_disconnect, first_interval=0.001)
                         break
                     except Exception as e:
                         self.report({'ERROR'}, f"Exception: {e}")
@@ -262,7 +262,7 @@ class PlasticityClient:
             self.websocket = None
             self.filename = None
             self.subscribed = False
-            self.handler.on_disconnect()
+            bpy.app.timers.register(self.handler.on_disconnect, first_interval=0.001)
         except InvalidURI:
             self.report(
                 {'ERROR'}, "Invalid URI for the WebSocket server")
@@ -386,6 +386,7 @@ class PlasticityClient:
 
         if code != 200:
             self.report({'ERROR'}, f"Refacet failed with code: {code}")
+            bpy.app.timers.register(self.handler.on_disconnect, first_interval=0.001)
             return
 
         filename_length = int.from_bytes(view[offset:offset + 4], 'little')
