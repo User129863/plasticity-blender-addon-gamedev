@@ -4,7 +4,7 @@ GameDev-focused fork of the Plasticity Blender bridge. Builds on upstream and ad
 
 ## Upstreamed into the official add-on workflow
 
-These features were developed in this branch first and were later upstreamed, so they are part of the official Plasticity Blender add-on workflow:
+These features were developed in this fork first and were later upstreamed, so they are part of the official Plasticity Blender add-on workflow:
 
 - AutoMarkEdgesOperator: consolidates "Mark Sharp" and "Mark Sharp at boundaries" into a single operator with modes to mark selection as Hard Edges (Sharp) or UV Seams (Seam).
 - Smart edge marking (Sharp/Seam): operates on entire-mesh selections (not individually selected polygons inside a Plasticity group) and applies edge marking using the same boundary logic as MarkSharpEdgesForPlasticityGroupsWithSplitNormalsOperator.
@@ -14,7 +14,7 @@ These features were developed in this branch first and were later upstreamed, so
 
 This fork continues beyond upstream and adds additional GameDev-focused workflow changes, targeting real-time asset preparation (game-ready topology/edge control, UV workflow, and export-oriented tooling).
 
-## New features in this branch
+## New features in this fork
 
 - Fillet-aware selection in Select Plasticity Face(s): optional adjacent-fillet mode expands selection by curvature/area thresholds; vertex adjacency helps bridge tight corners; setting Min Curvature Angle to 0 includes chamfers.
 - Refacet presets for game-ready topology control: save per-object remesh parameters to control mesh density and edge/silhouette fidelity, useful for consistent edge control and poly-budget management on CAD-derived meshes.
@@ -32,6 +32,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Merge Non-overlapping Meshes: supports selection-only vs visible objects, with threshold exposed in the redo panel; optimized overlap checks (AABB fast reject + KDTree distance checks, name-based resolution to avoid stale refs); useful for batching and for baking workflows that use bevel-shader techniques, but can increase bake times in Blender.
 - UV workflow tools: open/close UV editor, select meshes without UVs, remove UVs, and material/texture cleanup grouped together.
 - Import/export utilities: FBX and OBJ import/export with modern operator support and legacy fallback.
+
 
 
 
