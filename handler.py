@@ -2,6 +2,7 @@
 # - [ ] All on_... methods should call operators (to better handle undo, to have reporting be visible in the ui, etc)
 from collections import defaultdict
 from enum import Enum
+import time
 
 import bpy
 import mathutils
@@ -29,6 +30,9 @@ class SceneHandler:
         # NOTE: it turns out that caching this is unsafe with undo/redo; call __prepare() before every update
         self.files = {}
         self.list_filter_ids = None
+        self._status_min_interval = 1.0
+        self._last_status_time = 0.0
+        self._last_status_text = None
 
     def __create_mesh(self, name, verts, indices, normals, groups, face_ids):
         mesh = bpy.data.meshes.new(name)
@@ -42,13 +46,11 @@ class SceneHandler:
         mesh.polygons.foreach_set("loop_start", np.arange(
             0, len(indices), 3, dtype=np.int32))
 
-        safe_loop_normals(mesh, indices, normals)
-
         # NOTE: As of blender 4.2, the concrete type of user attributes cannot be numpy arrays.
         assert isinstance(groups, list)
         assert isinstance(face_ids, list)
-        mesh["groups"] = groups
-        mesh["face_ids"] = face_ids
+        _apply_plasticity_groups_and_normals(
+            mesh, indices, normals, groups, face_ids)
 
         return mesh
 
@@ -74,10 +76,8 @@ class SceneHandler:
         # NOTE: As of blender 4.2, the concrete type of user attributes cannot be numpy arrays.
         assert isinstance(groups, list)
         assert isinstance(face_ids, list)
-        mesh["groups"] = groups
-        mesh["face_ids"] = face_ids
-
-        safe_loop_normals(mesh, indices, normals)
+        _apply_plasticity_groups_and_normals(
+            mesh, indices, normals, groups, face_ids)
 
         self.update_pivot(obj)
 
@@ -105,7 +105,6 @@ class SceneHandler:
                 "loop_start", range(0, len(new_indices), 3))
             mesh.polygons.foreach_set(
                 "loop_total", [3] * (len(new_indices) // 3))
-            safe_loop_normals(mesh, indices, normals)
         else:
             # Find where a new face/polygon starts (value changes in the array)
             diffs = np.where(np.diff(faces))[0] + 1
@@ -117,13 +116,13 @@ class SceneHandler:
             mesh.polygons.add(len(loop_start))
             mesh.polygons.foreach_set("loop_start", loop_start)
             mesh.polygons.foreach_set("loop_total", loop_total)
-            safe_loop_normals(mesh, indices, normals)
+            # NOTE: safe_loop_normals happens after group validation.
 
         # NOTE: As of blender 4.2, the concrete type of user attributes cannot be numpy arrays.
         assert isinstance(groups, list)
         assert isinstance(face_ids, list)
-        mesh["groups"] = groups
-        mesh["face_ids"] = face_ids
+        _apply_plasticity_groups_and_normals(
+            mesh, indices, normals, groups, face_ids)
 
         self.update_pivot(obj)
 
@@ -425,21 +424,36 @@ class SceneHandler:
         prev_active_object = bpy.context.view_layer.objects.active
         prev_selected_objects = bpy.context.selected_objects
 
-        for i in range(len(plasticity_ids)):
-            plasticity_id = plasticity_ids[i]
-            version = versions[i]
-            face = faces[i] if len(faces) > 0 else None
-            position = positions[i]
-            index = indices[i]
-            normal = normals[i]
-            group = groups[i]
-            face_id = face_ids[i]
+        total = len(plasticity_ids)
+        if total:
+            self._update_status_text(
+                f"Progress: 0% (Refacet 0/{total})",
+                force=True,
+            )
+        try:
+            for i in range(len(plasticity_ids)):
+                plasticity_id = plasticity_ids[i]
+                version = versions[i]
+                face = faces[i] if len(faces) > 0 else None
+                position = positions[i]
+                index = indices[i]
+                normal = normals[i]
+                group = groups[i]
+                face_id = face_ids[i]
 
-            obj = self.files[filename][PlasticityIdUniquenessScope.ITEM].get(
-                plasticity_id)
-            if obj:
-                self.__update_mesh_ngons(
-                    obj, version, face, position, index, normal, group, face_id)
+                obj = self.files[filename][PlasticityIdUniquenessScope.ITEM].get(
+                    plasticity_id)
+                if obj:
+                    self.__update_mesh_ngons(
+                        obj, version, face, position, index, normal, group, face_id)
+                if total:
+                    percent = int(((i + 1) / total) * 100)
+                    self._update_status_text(
+                        f"Progress: {percent}% (Refacet {i + 1}/{total})",
+                    )
+        finally:
+            if total:
+                self._update_status_text(None, force=True)
 
         bpy.context.view_layer.objects.active = prev_active_object
         for obj in prev_selected_objects:
@@ -469,11 +483,241 @@ class SceneHandler:
     def report(self, level, message):
         print(message)
 
+    def _update_status_text(self, text, force=False):
+        workspace = bpy.context.workspace
+        if not workspace:
+            return
+        if text is None:
+            force = True
+        now = time.monotonic()
+        last_time = self._last_status_time
+        last_text = self._last_status_text
+        min_interval = self._status_min_interval
+        if not force:
+            if text == last_text:
+                return
+            if (now - last_time) < min_interval:
+                return
+        should_redraw = force or (now - last_time) >= min_interval
+        self._last_status_time = now
+        self._last_status_text = text
+        workspace.status_text_set(text)
+        if should_redraw:
+            try:
+                bpy.ops.wm.redraw_timer(type='DRAW_WIN_SWAP', iterations=1)
+            except Exception:
+                pass
+
+
+_PLASTICITY_LOOP_INDEX_ATTR = "_plasticity_loop_index_tmp"
+_PLASTICITY_FACE_ID_ATTR = "_plasticity_face_id_tmp"
+
+
+def _group_index_mode_for_mesh(groups, mesh):
+    if not groups:
+        return "loops"
+    counts_total = 0
+    max_end = 0
+    group_len = len(groups)
+    for idx in range(0, group_len, 2):
+        start = int(groups[idx])
+        count = int(groups[idx + 1]) if idx + 1 < group_len else 0
+        counts_total += count
+        end = start + count
+        if end > max_end:
+            max_end = end
+    if max_end <= len(mesh.polygons):
+        return "faces"
+    if max_end <= len(mesh.loops):
+        return "loops"
+    if counts_total == len(mesh.polygons):
+        return "faces"
+    if counts_total == len(mesh.loops):
+        return "loops"
+    return "loops"
+
+
+def _build_loop_face_ids(mesh, groups, face_ids):
+    if not groups or not face_ids:
+        return []
+    loop_count = len(mesh.loops)
+    if loop_count == 0:
+        return []
+    loop_face_ids = [-1] * loop_count
+    group_count = min(len(groups) // 2, len(face_ids))
+    mode = _group_index_mode_for_mesh(groups, mesh)
+
+    if mode == "faces":
+        face_count = len(mesh.polygons)
+        for group_idx in range(group_count):
+            start = int(groups[group_idx * 2])
+            count = int(groups[group_idx * 2 + 1])
+            if count <= 0 or start < 0:
+                continue
+            end = min(start + count, face_count)
+            face_id = int(face_ids[group_idx])
+            for face_index in range(start, end):
+                poly = mesh.polygons[face_index]
+                loop_start = poly.loop_start
+                loop_end = loop_start + poly.loop_total
+                for loop_index in range(loop_start, loop_end):
+                    loop_face_ids[loop_index] = face_id
+    else:
+        for group_idx in range(group_count):
+            start = int(groups[group_idx * 2])
+            count = int(groups[group_idx * 2 + 1])
+            if count <= 0 or start < 0:
+                continue
+            end = min(start + count, loop_count)
+            face_id = int(face_ids[group_idx])
+            for loop_index in range(start, end):
+                loop_face_ids[loop_index] = face_id
+
+    return loop_face_ids
+
+
+def _normalize_loop_face_ids(mesh, loop_face_ids):
+    if not loop_face_ids:
+        return
+    for poly in mesh.polygons:
+        loop_start = poly.loop_start
+        loop_end = loop_start + poly.loop_total
+        counts = {}
+        for loop_index in range(loop_start, loop_end):
+            face_id = loop_face_ids[loop_index]
+            if face_id is None or face_id < 0:
+                continue
+            counts[face_id] = counts.get(face_id, 0) + 1
+        if not counts:
+            continue
+        dominant_id = max(counts.items(), key=lambda item: item[1])[0]
+        for loop_index in range(loop_start, loop_end):
+            loop_face_ids[loop_index] = dominant_id
+
+
+def _compress_loop_face_ids(loop_face_ids):
+    groups_out = []
+    face_ids_out = []
+    current_id = None
+    start = 0
+    count = 0
+    for loop_index, face_id in enumerate(loop_face_ids):
+        if face_id is None or face_id < 0:
+            if current_id is not None:
+                groups_out.extend([start, count])
+                face_ids_out.append(current_id)
+                current_id = None
+                count = 0
+            continue
+        if current_id is None:
+            current_id = face_id
+            start = loop_index
+            count = 1
+        elif face_id == current_id:
+            count += 1
+        else:
+            groups_out.extend([start, count])
+            face_ids_out.append(current_id)
+            current_id = face_id
+            start = loop_index
+            count = 1
+
+    if current_id is not None:
+        groups_out.extend([start, count])
+        face_ids_out.append(current_id)
+
+    return groups_out, face_ids_out
+
+
+def _ensure_loop_index_attribute(mesh, indices):
+    loop_count = len(mesh.loops)
+    if loop_count == 0:
+        return None
+    if _PLASTICITY_LOOP_INDEX_ATTR in mesh.attributes:
+        mesh.attributes.remove(mesh.attributes[_PLASTICITY_LOOP_INDEX_ATTR])
+    attr = mesh.attributes.new(_PLASTICITY_LOOP_INDEX_ATTR, 'INT', 'CORNER')
+    if len(indices) == loop_count:
+        attr.data.foreach_set("value", indices)
+    else:
+        loop_indices = np.empty(loop_count, dtype=np.int32)
+        mesh.loops.foreach_get("vertex_index", loop_indices)
+        attr.data.foreach_set("value", loop_indices)
+    return _PLASTICITY_LOOP_INDEX_ATTR
+
+
+def _ensure_face_id_attribute(mesh, groups, face_ids):
+    loop_face_ids = _build_loop_face_ids(mesh, groups, face_ids)
+    if not loop_face_ids:
+        return None
+    if _PLASTICITY_FACE_ID_ATTR in mesh.attributes:
+        mesh.attributes.remove(mesh.attributes[_PLASTICITY_FACE_ID_ATTR])
+    attr = mesh.attributes.new(_PLASTICITY_FACE_ID_ATTR, 'INT', 'CORNER')
+    attr.data.foreach_set("value", loop_face_ids)
+    return _PLASTICITY_FACE_ID_ATTR
+
+
+def _rebuild_groups_from_face_id_attribute(mesh, attr_name):
+    attr = mesh.attributes.get(attr_name)
+    if not attr:
+        return [], []
+    loop_count = len(mesh.loops)
+    if loop_count == 0:
+        return [], []
+    loop_face_ids = np.empty(loop_count, dtype=np.int32)
+    attr.data.foreach_get("value", loop_face_ids)
+    loop_face_ids = loop_face_ids.tolist()
+    _normalize_loop_face_ids(mesh, loop_face_ids)
+    return _compress_loop_face_ids(loop_face_ids)
+
+
+def _cleanup_temp_attributes(mesh, attr_names):
+    for name in attr_names:
+        if not name:
+            continue
+        attr = mesh.attributes.get(name)
+        if attr:
+            mesh.attributes.remove(attr)
+
+
+def _apply_plasticity_groups_and_normals(mesh, indices, normals, groups, face_ids):
+    face_attr = _ensure_face_id_attribute(mesh, groups, face_ids)
+    loop_index_attr = None
+    if face_attr:
+        loop_index_attr = _ensure_loop_index_attribute(mesh, indices)
+        mesh.validate(clean_customdata=False)
+        groups, face_ids = _rebuild_groups_from_face_id_attribute(
+            mesh, face_attr)
+
+    mesh["groups"] = groups
+    mesh["face_ids"] = face_ids
+    mesh["plasticity_groups_version"] = int(mesh.get("plasticity_groups_version", 0)) + 1
+    mesh["plasticity_seams_version"] = int(mesh.get("plasticity_seams_version", 0)) + 1
+    safe_loop_normals(mesh, indices, normals)
+    _cleanup_temp_attributes(mesh, [face_attr, loop_index_attr])
+
 
 def safe_loop_normals(mesh, indices, normals):
+    if "temp_custom_normals" in mesh.attributes:
+        mesh.attributes.remove(mesh.attributes["temp_custom_normals"])
+    if normals is None or len(mesh.loops) == 0:
+        return
+    normals_array = normals.reshape(-1, 3)
+    loop_count = len(mesh.loops)
+
+    loop_indices = None
+    attr = mesh.attributes.get(_PLASTICITY_LOOP_INDEX_ATTR)
+    if attr and attr.domain == 'CORNER':
+        loop_indices = np.empty(loop_count, dtype=np.int32)
+        attr.data.foreach_get("value", loop_indices)
+    elif len(indices) == loop_count:
+        loop_indices = np.asarray(indices, dtype=np.int32)
+    else:
+        loop_indices = np.empty(loop_count, dtype=np.int32)
+        mesh.loops.foreach_get("vertex_index", loop_indices)
+
     mesh.attributes.new("temp_custom_normals", 'FLOAT_VECTOR', 'CORNER')
     mesh.attributes["temp_custom_normals"].data.foreach_set(
-        "vector", normals.reshape(-1, 3)[indices].ravel())
+        "vector", normals_array[loop_indices].ravel())
 
     mesh.validate(clean_customdata=False)
 
