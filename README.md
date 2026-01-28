@@ -18,7 +18,7 @@ These features were developed in this fork first and were later upstreamed, so t
 
 This fork continues beyond upstream and adds additional GameDev-focused workflow changes, targeting real-time asset preparation (game-ready topology/edge control, UV workflow, and export-oriented tooling).
 
-## New features in this fork
+## Version 1.0 features
 
 - Fillet-aware selection in Select Plasticity Face(s): optional adjacent-fillet mode expands selection by curvature/area thresholds; vertex adjacency helps bridge tight corners; setting Min Curvature Angle to 0 includes chamfers.
 - Refacet presets for game-ready topology control: save per-object remesh parameters to control mesh density and edge/silhouette fidelity, useful for consistent edge control and poly-budget management on CAD-derived meshes.
@@ -37,9 +37,13 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - UV workflow tools: open/close UV editor, select meshes without UVs, remove UVs, and material/texture cleanup grouped together.
 - Import/export utilities: FBX and OBJ import/export with modern operator support and legacy fallback.
 
+## Version 1.1 updates
 
+Latest workflow updates focused on multi-object UV tools, improved overlays, and a more streamlined checker texture workflow.
 
-
-
-
-
+- Live Expand Selection (multi-object): Live Expand and Auto Merge now work across multiple selected edit-mode objects, applying per-object seam changes and unwraps.
+- Merge UV Seams (multi-object): merge operations now run across all selected edit-mode objects instead of only the active object.
+- Plasticity Edge Highlight: optional overlay highlighting for Plasticity edges with active-view-only, occlusion, thickness, and color controls.
+- Relax UVs (multi-object): relax now operates on any selected faces across multiple edit-mode objects (requires Blender 4.3+).
+- UV editor open/close: opening the UV editor no longer forces a select-all pass, so selections are preserved and auto-merge seams will not be unintentionally triggered.
+- Checker textures workflow: bundled checker library with preview grid and default selection (UVChecker-color-1024x1024), plus custom file selection via path picker.
