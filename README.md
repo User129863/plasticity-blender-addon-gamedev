@@ -1,4 +1,6 @@
-[![Buy Me a Coffee](https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png)](https://buymeacoffee.com/User129863)
+<a href="https://buymeacoffee.com/User129863">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
+</a>
 
 # plasticity-blender-addon-gamedev
 
