@@ -41,7 +41,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 
 Latest workflow updates focused on multi-object UV tools, improved overlays, and a more streamlined checker texture workflow.
 
-- Live Expand Selection (multi-object): Live Expand and Auto Merge now work across multiple selected edit-mode objects, applying per-object seam changes and unwraps.
+- Live Expand Selection (multi-object): this is a live paint-select workflow for Plasticity faces. While Live Expand is enabled, you can circle-select faces and the tool continuously expands the selection to full Plasticity face groups (with optional adjacent-fillet expansion) across all selected edit-mode objects. When Live Unwrap 3D is on, the UV unwrap updates immediately as you paint, so selection, seam changes (Auto Merge + Auto Cylinder if enabled), and UV layout become a single continuous pass instead of separate steps.
 - Merge UV Seams (multi-object): merge operations now run across all selected edit-mode objects instead of only the active object.
 - Plasticity Edge Highlight: optional overlay highlighting for Plasticity edges with active-view-only, occlusion, thickness, and color controls.
 - Relax UVs (multi-object): relax now operates on any selected faces across multiple edit-mode objects (requires Blender 4.3+).
