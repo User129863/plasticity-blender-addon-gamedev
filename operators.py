@@ -1363,6 +1363,25 @@ def _unwrap_kwargs_from_tool_settings(tool_settings):
     return kwargs
 
 
+def _pack_islands_kwargs(margin, rotate, merge_overlap=False):
+    kwargs = {
+        "margin": margin,
+        "rotate": rotate,
+    }
+    if merge_overlap is not None:
+        kwargs["merge_overlap"] = merge_overlap
+
+    try:
+        props = bpy.ops.uv.pack_islands.get_rna_type().properties
+        allowed = {prop.identifier for prop in props}
+    except Exception:
+        return {
+            "margin": margin,
+            "rotate": rotate,
+        }
+    return {key: value for key, value in kwargs.items() if key in allowed}
+
+
 class RelaxUVsPlasticityOperator(bpy.types.Operator):
     bl_idname = "mesh.relax_uvs_plasticity"
     bl_label = "Relax UVs"
@@ -2172,8 +2191,11 @@ class AutoUnwrapPlasticityOperator(bpy.types.Operator):
                     bpy.ops.uv.average_islands_scale()
                 if self.pack_islands:
                     bpy.ops.uv.pack_islands(
-                        rotate=self.pack_rotate,
-                        margin=self.pack_margin,
+                        **_pack_islands_kwargs(
+                            margin=self.pack_margin,
+                            rotate=self.pack_rotate,
+                            merge_overlap=False,
+                        )
                     )
             finally:
                 context.tool_settings.use_uv_select_sync = prev_uv_sync
@@ -2300,8 +2322,11 @@ class AutoUnwrapPlasticityOperator(bpy.types.Operator):
                 bpy.ops.uv.average_islands_scale()
             if self.pack_islands:
                 bpy.ops.uv.pack_islands(
-                    rotate=self.pack_rotate,
-                    margin=self.pack_margin,
+                    **_pack_islands_kwargs(
+                        margin=self.pack_margin,
+                        rotate=self.pack_rotate,
+                        merge_overlap=False,
+                    )
                 )
         finally:
             context.tool_settings.use_uv_select_sync = prev_uv_sync
@@ -2673,21 +2698,31 @@ class PackUVIslandsPlasticityOperator(bpy.types.Operator):
                     bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
             try:
+                tool_settings = context.scene.tool_settings if context.scene else None
+                prev_uv_sync = None
+                if tool_settings:
+                    prev_uv_sync = tool_settings.use_uv_select_sync
+                    tool_settings.use_uv_select_sync = True
                 bpy.ops.mesh.select_all(action='SELECT')
                 if self.average_islands:
                     _relax_run_uv_op(
                         context,
                         bpy.ops.uv.average_islands_scale,
-                        force_uv_sync=True,
+                        force_uv_sync=False,
                     )
                 packed = _relax_run_uv_op(
                     context,
                     bpy.ops.uv.pack_islands,
-                    force_uv_sync=True,
-                    rotate=self.pack_rotate,
-                    margin=self.pack_margin,
+                    force_uv_sync=False,
+                    **_pack_islands_kwargs(
+                        margin=self.pack_margin,
+                        rotate=self.pack_rotate,
+                        merge_overlap=False,
+                    ),
                 )
             finally:
+                if tool_settings and prev_uv_sync is not None:
+                    tool_settings.use_uv_select_sync = prev_uv_sync
                 for obj in valid_objects:
                     bm = bmesh.from_edit_mesh(obj.data)
                     uv_layer = bm.loops.layers.uv.active
