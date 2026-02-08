@@ -1,14 +1,15 @@
 bl_info = {
-    "name": "Plasticity",
-    "description": "A bridge to Plasticity",
+    "name": "Plasticity Blender Addon Gamedev",
+    "description": "Game development focused fork of the Plasticity Blender add-on.",
     "author": "Nick Kallen, User129863",
-    "version": (2, 0, 6),
-    "blender": (4, 1, 0),
+    "version": (1, 2, 0),
+    "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Plasticity",
     "category": "Object",
 }
 
 import bpy
+import bmesh
 import json
 import os
 import bpy.app.handlers
@@ -59,12 +60,7 @@ def load_presets(dummy):
         preset.from_dict(preset_dict)            
 
     # Ensure checker library defaults are initialized after loading
-    if getattr(scene, "prop_plasticity_checker_source", None) is None:
-        scene.prop_plasticity_checker_source = "LIBRARY"
-    if getattr(scene, "prop_plasticity_checker_source", None) == "LIBRARY":
-        default_enum = operators.get_checker_default_enum()
-        if default_enum:
-            scene.prop_plasticity_checker_image = default_enum
+    _initialize_checker_scene(scene)
 
 def update_and_save_preset(self, context):
     save_presets()
@@ -117,6 +113,8 @@ def update_density_scene(self, context):
 
 LIVE_EXPAND_CIRCLE_RADIUS = 5
 _LAST_CONTEXT_MODE = None
+_CHECKER_AUTO_ASSIGN_SCHEDULED = False
+_CHECKER_INIT_SCHEDULED = False
 
 
 def update_live_expand(self, context):
@@ -130,9 +128,22 @@ def update_live_expand(self, context):
     else:
         if getattr(context.scene, "prop_plasticity_live_expand_auto_circle", False):
             _set_view3d_tool("builtin.select_box")
-        operators.stop_live_expand_timer()
+        if not getattr(context.scene, "prop_plasticity_live_expand_auto_merge_seams", False):
+            operators.stop_live_expand_timer()
         if not getattr(context.scene, "prop_plasticity_live_expand_edge_highlight", False):
             operators.stop_live_expand_overlay()
+
+
+def update_live_expand_auto_merge_seams(self, context):
+    scene = getattr(context, "scene", None) if context else None
+    if scene is None:
+        return
+    if getattr(scene, "prop_plasticity_live_expand", False) or getattr(
+        scene, "prop_plasticity_live_expand_auto_merge_seams", False
+    ):
+        operators.ensure_live_expand_timer()
+    else:
+        operators.stop_live_expand_timer()
 
 def update_live_expand_auto_circle(self, context):
     if self.prop_plasticity_live_expand_auto_circle and self.prop_plasticity_live_expand:
@@ -163,6 +174,10 @@ def _on_mode_change(scene, depsgraph):
         return
     if getattr(scene, "prop_plasticity_live_expand_auto_circle", False):
         _set_view3d_tool("builtin.select_box")
+    if getattr(scene, "prop_plasticity_live_expand_auto_merge_seams", False):
+        scene.prop_plasticity_live_expand_auto_merge_seams = False
+    if getattr(scene, "prop_plasticity_auto_seam_mode", None) != 'OFF':
+        scene.prop_plasticity_auto_seam_mode = 'OFF'
 
 def update_live_refacet(self, context):
     if not self.prop_plasticity_live_refacet:
@@ -185,11 +200,150 @@ def update_checker_source(self, context):
     if getattr(scene, "prop_plasticity_checker_source", None) != "LIBRARY":
         return
     current = getattr(scene, "prop_plasticity_checker_image", None)
-    if current and current != "NONE":
+    if not current or current == "NONE":
+        default_enum = operators.get_checker_default_enum()
+        if default_enum and hasattr(scene, "prop_plasticity_checker_image"):
+            scene.prop_plasticity_checker_image = default_enum
+    operators.normalize_checker_enum(scene)
+
+def _run_checker_auto_assign_timer():
+    global _CHECKER_AUTO_ASSIGN_SCHEDULED
+    _CHECKER_AUTO_ASSIGN_SCHEDULED = False
+    context = bpy.context
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return None
+    if not getattr(scene, "prop_plasticity_pref_auto_assign_checker_on_select", False):
+        return None
+    if getattr(scene, "prop_plasticity_checker_source", "LIBRARY") != "LIBRARY":
+        return None
+    checker_image = getattr(scene, "prop_plasticity_checker_image", "NONE")
+    if not checker_image or checker_image == "NONE":
+        return None
+    try:
+        explicit_targets = []
+        if context.mode == 'OBJECT':
+            explicit_targets = [obj for obj in context.selected_objects if obj and obj.type == 'MESH']
+        elif context.mode == 'EDIT_MESH':
+            edit_objects = getattr(context, "objects_in_mode", None) or []
+            for obj in edit_objects:
+                if not obj or obj.type != 'MESH':
+                    continue
+                try:
+                    bm = bmesh.from_edit_mesh(obj.data)
+                except Exception:
+                    continue
+                if any(face.select for face in bm.faces):
+                    explicit_targets.append(obj)
+        if not explicit_targets:
+            return None
+        if not operators.AssignUVCheckerTextureOperator.poll(context):
+            return None
+        bpy.ops.object.assign_uv_checker_texture("EXEC_DEFAULT")
+    except Exception:
+        return None
+    return None
+
+def _schedule_checker_auto_assign():
+    global _CHECKER_AUTO_ASSIGN_SCHEDULED
+    if _CHECKER_AUTO_ASSIGN_SCHEDULED:
         return
-    default_enum = operators.get_checker_default_enum()
-    if default_enum and hasattr(scene, "prop_plasticity_checker_image"):
-        scene.prop_plasticity_checker_image = default_enum
+    _CHECKER_AUTO_ASSIGN_SCHEDULED = True
+    bpy.app.timers.register(_run_checker_auto_assign_timer, first_interval=0.05)
+
+
+def _initialize_checker_scene(scene):
+    if scene is None:
+        return
+    checker_source = getattr(scene, "prop_plasticity_checker_source", None)
+    if checker_source not in {"LIBRARY", "FILE"}:
+        scene.prop_plasticity_checker_source = "LIBRARY"
+        checker_source = "LIBRARY"
+    if checker_source != "LIBRARY":
+        return
+    operators.get_checker_image_items(None, bpy.context)
+    current = getattr(scene, "prop_plasticity_checker_image", None)
+    if current in (None, 0, "", "NONE"):
+        default_enum = operators.get_checker_default_enum()
+        if default_enum and default_enum != "NONE":
+            scene.prop_plasticity_checker_image = default_enum
+    operators.normalize_checker_enum(scene)
+
+
+def _initialize_checker_library():
+    context = bpy.context
+    scene = getattr(context, "scene", None)
+    if scene is not None:
+        _initialize_checker_scene(scene)
+    scenes = []
+    try:
+        scenes = list(getattr(bpy.data, "scenes", []))
+    except Exception:
+        scenes = []
+    for other_scene in scenes:
+        if scene is not None and other_scene == scene:
+            continue
+        _initialize_checker_scene(other_scene)
+
+    window_manager = getattr(context, "window_manager", None)
+    if not window_manager:
+        return
+    for window in window_manager.windows:
+        screen = window.screen
+        if screen is None:
+            continue
+        for area in screen.areas:
+            if area.type in {"VIEW_3D", "IMAGE_EDITOR", "PROPERTIES"}:
+                area.tag_redraw()
+
+
+def _run_checker_init_timer():
+    global _CHECKER_INIT_SCHEDULED
+    _CHECKER_INIT_SCHEDULED = False
+    try:
+        _initialize_checker_library()
+    except Exception:
+        pass
+    return None
+
+
+def _schedule_checker_init():
+    global _CHECKER_INIT_SCHEDULED
+    if _CHECKER_INIT_SCHEDULED:
+        return
+    _CHECKER_INIT_SCHEDULED = True
+    bpy.app.timers.register(_run_checker_init_timer, first_interval=0.05)
+
+def update_checker_image(self, context):
+    scene = getattr(context, "scene", None)
+    if scene is None:
+        return
+    if not getattr(scene, "prop_plasticity_pref_auto_assign_checker_on_select", False):
+        return
+    if getattr(scene, "prop_plasticity_checker_source", "LIBRARY") != "LIBRARY":
+        return
+    checker_image = getattr(scene, "prop_plasticity_checker_image", "NONE")
+    if not checker_image or checker_image == "NONE":
+        return
+    _schedule_checker_auto_assign()
+
+def update_util_auto_mark_edges(self, context):
+    return
+
+def update_util_merge_uv_seams(self, context):
+    return
+
+def update_util_select_faces(self, context):
+    return
+
+def update_util_select_edges(self, context):
+    return
+
+def update_util_paint_faces(self, context):
+    return
+
+def update_util_highlight(self, context):
+    return
 
 def _set_view3d_tool(tool_id, circle_radius=None):
     window_manager = bpy.context.window_manager
@@ -390,6 +544,7 @@ def register():
     bpy.utils.register_class(operators.MergeUVSeams)
     bpy.utils.register_class(operators.RelaxUVsPlasticityOperator)
     bpy.utils.register_class(operators.AutoUnwrapPlasticityOperator)
+    bpy.utils.register_class(operators.PackUVIslandsPlasticityOperator)
     bpy.utils.register_class(operators.PaintPlasticityFacesOperator)
     bpy.utils.register_class(operators.SimilarGeometrySelector)
     bpy.utils.register_class(operators.SelectedJoiner)
@@ -494,7 +649,7 @@ def register():
     bpy.types.Scene.prop_plasticity_live_expand_auto_circle = bpy.props.BoolProperty(
         name="Auto Circle Select Mode",
         description="Switch to Circle Select when Live Expand is enabled",
-        default=False,
+        default=True,
         update=update_live_expand_auto_circle,
     )
     bpy.types.Scene.prop_plasticity_live_expand_edge_highlight = bpy.props.BoolProperty(
@@ -519,14 +674,30 @@ def register():
         subtype='TIME',
     )
     bpy.types.Scene.prop_plasticity_live_expand_auto_merge_seams = bpy.props.BoolProperty(
-        name="Auto Merge Seams on Selection",
-        description="Automatically merge seams inside the Live Expand selection",
+        name="Auto Merge / Reset Seams on Selection",
+        description=(
+            "Automatically updates seams from the current face selection in Edit Mode. "
+            "A single click resets seams for that Plasticity surface. "
+            "While dragging a selection, seams are merged continuously as the selection changes. "
+            "Turns off when switching to Object Mode."
+        ),
         default=False,
+        update=update_live_expand_auto_merge_seams,
     )
-    bpy.types.Scene.prop_plasticity_auto_cylinder_seam = bpy.props.BoolProperty(
-        name="Auto Cylinder Seam",
-        description="Insert a seam on cylindrical selections to prevent UV overlap",
-        default=False,
+    bpy.types.Scene.prop_plasticity_auto_seam_mode = bpy.props.EnumProperty(
+        name="Auto Create Seam",
+        description=(
+            "Automatically create a seam based on the selected surface type. "
+            "Resets to Off when switching to Object Mode."
+        ),
+        items=[
+            ('OFF', "Off", "Do not auto-create seams"),
+            ('CYLINDER', "Cylinder", "Create a seam for cylindrical selections"),
+            ('SPHERE', "Sphere", "Create a meridian seam for closed spheres"),
+            ('SPHERE_CAP', "Sphere + Polar Cap", "Create a meridian seam plus a polar/rim seam"),
+            ('SPHERE_OPEN', "Sphere + Open Cap", "Create a meridian seam plus an open rim seam"),
+        ],
+        default='CYLINDER',
     )
     bpy.types.Scene.prop_plasticity_auto_cylinder_seam_mode = bpy.props.EnumProperty(
         name="Cylinder Seam Mode",
@@ -549,11 +720,6 @@ def register():
     bpy.types.Scene.prop_plasticity_auto_cylinder_seam_occluded_only = bpy.props.BoolProperty(
         name="Occluded Only (View)",
         description="Only place auto cylinder seams on edges occluded from the active 3D view",
-        default=False,
-    )
-    bpy.types.Scene.prop_plasticity_live_expand_respect_seams = bpy.props.BoolProperty(
-        name="Respect Existing Seams",
-        description="Keep existing seams when auto-merging",
         default=False,
     )
     bpy.types.Scene.prop_plasticity_live_expand_edge_thickness = bpy.props.FloatProperty(
@@ -597,9 +763,110 @@ def register():
         precision=2,
         subtype='TIME',
     )
+    bpy.types.Scene.prop_plasticity_ui_tab = bpy.props.EnumProperty(
+        items=[
+            ("PINNED", "Pinned", "Pinned items only"),
+            ("MAIN", "Main", "Connection, live link, refresh, filters, scale"),
+            ("REFACET", "Refacet", "Refacet, presets, density/tolerance, live refacet"),
+            ("UTILITIES", "Utilities", "Selection, marking, and paint utilities"),
+            ("UV_TOOLS", "UV / Material / Texture Tools", "Unwrap, UV editor, UVs, materials, textures"),
+            ("MESH_TOOLS", "Mesh Tools", "Selection, joins, merge, mirror, modifiers, import/export"),
+            ("PREFERENCES", "Preferences", "General add-on behavior and workflow options"),
+        ],
+        name="Plasticity Tabs",
+        default="MAIN",
+    )
     bpy.types.Scene.prop_plasticity_ui_show_utilities = bpy.props.BoolProperty(name="Utilities", default=True)
+    bpy.types.Scene.prop_plasticity_ui_util_auto_mark_edges = bpy.props.BoolProperty(
+        name="Auto Mark Edges",
+        default=False,
+        update=update_util_auto_mark_edges,
+    )
+    bpy.types.Scene.prop_plasticity_ui_util_merge_uv_seams = bpy.props.BoolProperty(
+        name="Merge UV Seams",
+        default=False,
+        update=update_util_merge_uv_seams,
+    )
+    bpy.types.Scene.prop_plasticity_ui_util_select_faces = bpy.props.BoolProperty(
+        name="Select Plasticity Face(s)",
+        default=False,
+        update=update_util_select_faces,
+    )
+    bpy.types.Scene.prop_plasticity_ui_util_select_edges = bpy.props.BoolProperty(
+        name="Select Plasticity Edges",
+        default=False,
+        update=update_util_select_edges,
+    )
+    bpy.types.Scene.prop_plasticity_ui_util_paint_faces = bpy.props.BoolProperty(
+        name="Paint Plasticity Faces",
+        default=False,
+        update=update_util_paint_faces,
+    )
+    bpy.types.Scene.prop_plasticity_ui_util_highlight = bpy.props.BoolProperty(
+        name="Plasticity Edge Highlight",
+        default=False,
+        update=update_util_highlight,
+    )
     bpy.types.Scene.prop_plasticity_ui_show_uv_tools = bpy.props.BoolProperty(name="UV Tools", default=True)
     bpy.types.Scene.prop_plasticity_ui_show_mesh_tools = bpy.props.BoolProperty(name="Mesh Tools", default=True)
+    bpy.types.Scene.prop_plasticity_pin_live_link = bpy.props.BoolProperty(name="Pin Live Link", default=False)
+    bpy.types.Scene.prop_plasticity_pin_refresh = bpy.props.BoolProperty(name="Pin Refresh", default=False)
+    bpy.types.Scene.prop_plasticity_pin_only_visible = bpy.props.BoolProperty(name="Pin Only Visible", default=False)
+    bpy.types.Scene.prop_plasticity_pin_only_selected = bpy.props.BoolProperty(name="Pin Only Selected", default=False)
+    bpy.types.Scene.prop_plasticity_pin_scale = bpy.props.BoolProperty(name="Pin Scale", default=False)
+    bpy.types.Scene.prop_plasticity_pin_refacet = bpy.props.BoolProperty(name="Pin Refacet", default=True)
+    bpy.types.Scene.prop_plasticity_pin_auto_mark_edges = bpy.props.BoolProperty(name="Pin Auto Mark Edges", default=False)
+    bpy.types.Scene.prop_plasticity_pin_merge_uv_seams = bpy.props.BoolProperty(name="Pin Merge UV Seams", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_faces = bpy.props.BoolProperty(name="Pin Select Faces", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_edges = bpy.props.BoolProperty(name="Pin Select Edges", default=False)
+    bpy.types.Scene.prop_plasticity_pin_paint_faces = bpy.props.BoolProperty(name="Pin Paint Faces", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand = bpy.props.BoolProperty(name="Pin Live Expand Selection", default=True)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_auto_circle = bpy.props.BoolProperty(name="Pin Auto Circle Select Mode", default=True)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_interval = bpy.props.BoolProperty(name="Pin Update Interval", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_auto_merge_seams = bpy.props.BoolProperty(name="Pin Auto Merge Seams", default=True)
+    bpy.types.Scene.prop_plasticity_pin_auto_seam_mode = bpy.props.BoolProperty(name="Pin Auto Create Seam", default=True)
+    bpy.types.Scene.prop_plasticity_pin_auto_cylinder_seam_mode = bpy.props.BoolProperty(name="Pin Cylinder Seam Mode", default=False)
+    bpy.types.Scene.prop_plasticity_pin_auto_cylinder_partial_angle = bpy.props.BoolProperty(name="Pin Partial Wrap Angle", default=False)
+    bpy.types.Scene.prop_plasticity_pin_auto_cylinder_seam_occluded_only = bpy.props.BoolProperty(name="Pin Occluded Only", default=False)
+    bpy.types.Scene.prop_plasticity_pin_relax_uvs = bpy.props.BoolProperty(name="Pin Relax UVs", default=True)
+    bpy.types.Scene.prop_plasticity_pin_select_adjacent_fillets = bpy.props.BoolProperty(name="Pin Select Adjacent Fillets", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_fillet_min_curvature_angle = bpy.props.BoolProperty(name="Pin Min Curvature Angle", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_fillet_max_area_ratio = bpy.props.BoolProperty(name="Pin Max Area Ratio", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_fillet_min_adjacent_groups = bpy.props.BoolProperty(name="Pin Min Adjacent Groups", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_include_vertex_adjacency = bpy.props.BoolProperty(name="Pin Include Vertex Adjacent", default=False)
+    bpy.types.Scene.prop_plasticity_pin_select_vertex_adjacent_max_length_ratio = bpy.props.BoolProperty(name="Pin Max Vertex Adjacent Length Ratio", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_edge_highlight = bpy.props.BoolProperty(name="Pin Plasticity Edge Highlight", default=True)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_active_view_only = bpy.props.BoolProperty(name="Pin Active View Only", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_edge_occlude = bpy.props.BoolProperty(name="Pin Occlude Hidden Edges", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_edge_thickness = bpy.props.BoolProperty(name="Pin Edge Highlight Thickness", default=False)
+    bpy.types.Scene.prop_plasticity_pin_live_expand_overlay_color = bpy.props.BoolProperty(name="Pin Edge Highlight Color", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_unwrap = bpy.props.BoolProperty(name="Pin Unwrap", default=True)
+    bpy.types.Scene.prop_plasticity_pin_uv_pack_islands = bpy.props.BoolProperty(name="Pin Pack UV Islands", default=True)
+    bpy.types.Scene.prop_plasticity_pin_uv_open_editor = bpy.props.BoolProperty(name="Pin Open UV Editor", default=True)
+    bpy.types.Scene.prop_plasticity_pin_uv_close_editor = bpy.props.BoolProperty(name="Pin Close UV Editor", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_select_without_uvs = bpy.props.BoolProperty(name="Pin Select Objects Without UVs", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_remove_uvs = bpy.props.BoolProperty(name="Pin Remove UVs", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_remove_materials = bpy.props.BoolProperty(name="Pin Remove Materials", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_reload_textures = bpy.props.BoolProperty(name="Pin Reload Textures", default=False)
+    bpy.types.Scene.prop_plasticity_pin_uv_assign_checker = bpy.props.BoolProperty(name="Pin Assign Checker", default=True)
+    bpy.types.Scene.prop_plasticity_pin_uv_remove_checker = bpy.props.BoolProperty(name="Pin Remove Checker Nodes", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_select_similar = bpy.props.BoolProperty(name="Pin Select Similar Geometry", default=True)
+    bpy.types.Scene.prop_plasticity_pin_mesh_join = bpy.props.BoolProperty(name="Pin Join Selected", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_unjoin = bpy.props.BoolProperty(name="Pin Unjoin Selected", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_merge_nonoverlapping = bpy.props.BoolProperty(name="Pin Merge Non-overlapping Meshes", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_overlap_threshold = bpy.props.BoolProperty(name="Pin Overlap Threshold", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_select_ngons = bpy.props.BoolProperty(name="Pin Select Meshes with Ngons", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_mirror = bpy.props.BoolProperty(name="Pin Mirror Selected", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_mirror_axis = bpy.props.BoolProperty(name="Pin Mirror Axis", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_mirror_center = bpy.props.BoolProperty(name="Pin Mirror Center", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_remove_modifiers = bpy.props.BoolProperty(name="Pin Remove Modifiers", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_apply_modifiers = bpy.props.BoolProperty(name="Pin Apply Modifiers", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_remove_vertex_groups = bpy.props.BoolProperty(name="Pin Remove Vertex Groups", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_snap_cursor = bpy.props.BoolProperty(name="Pin Snap to 3D Cursor", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_import_fbx = bpy.props.BoolProperty(name="Pin Import FBX", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_export_fbx = bpy.props.BoolProperty(name="Pin Export FBX", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_import_obj = bpy.props.BoolProperty(name="Pin Import OBJ", default=False)
+    bpy.types.Scene.prop_plasticity_pin_mesh_export_obj = bpy.props.BoolProperty(name="Pin Export OBJ", default=False)
     bpy.types.Scene.prop_plasticity_checker_source = bpy.props.EnumProperty(
         items=[
             ("LIBRARY", "Checker Textures Library", "Use bundled checker textures"),
@@ -614,6 +881,12 @@ def register():
         name="Checker Texture",
         # Blender 4.5 requires an integer index default when items is a callback.
         default=0,
+        update=update_checker_image,
+    )
+    bpy.types.Scene.prop_plasticity_pref_auto_assign_checker_on_select = bpy.props.BoolProperty(
+        name="Auto Assign Checker on Selection",
+        description="Automatically assign the selected checker texture to selected mesh objects/faces",
+        default=False,
     )
     bpy.types.Scene.prop_plasticity_checker_custom_path = bpy.props.StringProperty(
         name="Checker Image",
@@ -702,10 +975,23 @@ def register():
     if _on_mode_change not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_mode_change)
 
+    try:
+        _initialize_checker_library()
+    except Exception:
+        pass
+    _schedule_checker_init()
+
     print("Plasticity client registered")
 
 def unregister():
     print("Unregistering Plasticity client")
+    global _CHECKER_INIT_SCHEDULED
+    if _CHECKER_INIT_SCHEDULED:
+        try:
+            bpy.app.timers.unregister(_run_checker_init_timer)
+        except Exception:
+            pass
+        _CHECKER_INIT_SCHEDULED = False
     operators.stop_live_expand_timer()
     operators.stop_live_refacet_timer()
     operators.stop_live_expand_overlay()
@@ -730,6 +1016,7 @@ def unregister():
     bpy.utils.unregister_class(operators.MergeUVSeams)
     bpy.utils.unregister_class(operators.RelaxUVsPlasticityOperator)
     bpy.utils.unregister_class(operators.AutoUnwrapPlasticityOperator)
+    bpy.utils.unregister_class(operators.PackUVIslandsPlasticityOperator)
     bpy.utils.unregister_class(operators.PaintPlasticityFacesOperator)
     bpy.utils.unregister_class(operators.SimilarGeometrySelector)
     bpy.utils.unregister_class(operators.SelectedJoiner) 
@@ -781,11 +1068,10 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_live_expand_active_view_only
     del bpy.types.Scene.prop_plasticity_live_expand_interval
     del bpy.types.Scene.prop_plasticity_live_expand_auto_merge_seams
-    del bpy.types.Scene.prop_plasticity_auto_cylinder_seam
+    del bpy.types.Scene.prop_plasticity_auto_seam_mode
     del bpy.types.Scene.prop_plasticity_auto_cylinder_seam_mode
     del bpy.types.Scene.prop_plasticity_auto_cylinder_partial_angle
     del bpy.types.Scene.prop_plasticity_auto_cylinder_seam_occluded_only
-    del bpy.types.Scene.prop_plasticity_live_expand_respect_seams
     del bpy.types.Scene.prop_plasticity_live_expand_edge_thickness
     del bpy.types.Scene.prop_plasticity_live_expand_edge_occlude
     del bpy.types.Scene.prop_plasticity_live_expand_overlay_color
@@ -795,11 +1081,77 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_ui_show_refacet
     del bpy.types.Scene.prop_plasticity_live_refacet
     del bpy.types.Scene.prop_plasticity_live_refacet_interval
+    del bpy.types.Scene.prop_plasticity_ui_tab
     del bpy.types.Scene.prop_plasticity_ui_show_utilities
+    del bpy.types.Scene.prop_plasticity_ui_util_auto_mark_edges
+    del bpy.types.Scene.prop_plasticity_ui_util_merge_uv_seams
+    del bpy.types.Scene.prop_plasticity_ui_util_select_faces
+    del bpy.types.Scene.prop_plasticity_ui_util_select_edges
+    del bpy.types.Scene.prop_plasticity_ui_util_paint_faces
+    del bpy.types.Scene.prop_plasticity_ui_util_highlight
     del bpy.types.Scene.prop_plasticity_ui_show_uv_tools
     del bpy.types.Scene.prop_plasticity_ui_show_mesh_tools
+    del bpy.types.Scene.prop_plasticity_pin_live_link
+    del bpy.types.Scene.prop_plasticity_pin_refresh
+    del bpy.types.Scene.prop_plasticity_pin_only_visible
+    del bpy.types.Scene.prop_plasticity_pin_only_selected
+    del bpy.types.Scene.prop_plasticity_pin_scale
+    del bpy.types.Scene.prop_plasticity_pin_refacet
+    del bpy.types.Scene.prop_plasticity_pin_auto_mark_edges
+    del bpy.types.Scene.prop_plasticity_pin_merge_uv_seams
+    del bpy.types.Scene.prop_plasticity_pin_select_faces
+    del bpy.types.Scene.prop_plasticity_pin_select_edges
+    del bpy.types.Scene.prop_plasticity_pin_paint_faces
+    del bpy.types.Scene.prop_plasticity_pin_live_expand
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_auto_circle
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_interval
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_auto_merge_seams
+    del bpy.types.Scene.prop_plasticity_pin_auto_seam_mode
+    del bpy.types.Scene.prop_plasticity_pin_auto_cylinder_seam_mode
+    del bpy.types.Scene.prop_plasticity_pin_auto_cylinder_partial_angle
+    del bpy.types.Scene.prop_plasticity_pin_auto_cylinder_seam_occluded_only
+    del bpy.types.Scene.prop_plasticity_pin_relax_uvs
+    del bpy.types.Scene.prop_plasticity_pin_select_adjacent_fillets
+    del bpy.types.Scene.prop_plasticity_pin_select_fillet_min_curvature_angle
+    del bpy.types.Scene.prop_plasticity_pin_select_fillet_max_area_ratio
+    del bpy.types.Scene.prop_plasticity_pin_select_fillet_min_adjacent_groups
+    del bpy.types.Scene.prop_plasticity_pin_select_include_vertex_adjacency
+    del bpy.types.Scene.prop_plasticity_pin_select_vertex_adjacent_max_length_ratio
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_edge_highlight
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_active_view_only
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_edge_occlude
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_edge_thickness
+    del bpy.types.Scene.prop_plasticity_pin_live_expand_overlay_color
+    del bpy.types.Scene.prop_plasticity_pin_uv_unwrap
+    del bpy.types.Scene.prop_plasticity_pin_uv_pack_islands
+    del bpy.types.Scene.prop_plasticity_pin_uv_open_editor
+    del bpy.types.Scene.prop_plasticity_pin_uv_close_editor
+    del bpy.types.Scene.prop_plasticity_pin_uv_select_without_uvs
+    del bpy.types.Scene.prop_plasticity_pin_uv_remove_uvs
+    del bpy.types.Scene.prop_plasticity_pin_uv_remove_materials
+    del bpy.types.Scene.prop_plasticity_pin_uv_reload_textures
+    del bpy.types.Scene.prop_plasticity_pin_uv_assign_checker
+    del bpy.types.Scene.prop_plasticity_pin_uv_remove_checker
+    del bpy.types.Scene.prop_plasticity_pin_mesh_select_similar
+    del bpy.types.Scene.prop_plasticity_pin_mesh_join
+    del bpy.types.Scene.prop_plasticity_pin_mesh_unjoin
+    del bpy.types.Scene.prop_plasticity_pin_mesh_merge_nonoverlapping
+    del bpy.types.Scene.prop_plasticity_pin_mesh_overlap_threshold
+    del bpy.types.Scene.prop_plasticity_pin_mesh_select_ngons
+    del bpy.types.Scene.prop_plasticity_pin_mesh_mirror
+    del bpy.types.Scene.prop_plasticity_pin_mesh_mirror_axis
+    del bpy.types.Scene.prop_plasticity_pin_mesh_mirror_center
+    del bpy.types.Scene.prop_plasticity_pin_mesh_remove_modifiers
+    del bpy.types.Scene.prop_plasticity_pin_mesh_apply_modifiers
+    del bpy.types.Scene.prop_plasticity_pin_mesh_remove_vertex_groups
+    del bpy.types.Scene.prop_plasticity_pin_mesh_snap_cursor
+    del bpy.types.Scene.prop_plasticity_pin_mesh_import_fbx
+    del bpy.types.Scene.prop_plasticity_pin_mesh_export_fbx
+    del bpy.types.Scene.prop_plasticity_pin_mesh_import_obj
+    del bpy.types.Scene.prop_plasticity_pin_mesh_export_obj
     del bpy.types.Scene.prop_plasticity_checker_source
     del bpy.types.Scene.prop_plasticity_checker_image
+    del bpy.types.Scene.prop_plasticity_pref_auto_assign_checker_on_select
     del bpy.types.Scene.prop_plasticity_checker_custom_path
     del bpy.types.Scene.prop_plasticity_facet_min_width
     del bpy.types.Scene.prop_plasticity_facet_max_width
