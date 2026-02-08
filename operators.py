@@ -75,7 +75,7 @@ def get_checker_default_enum():
     files = _list_checker_images()
     if not files:
         return "NONE"
-    preferred = "UVChecker-color-1024x1024.png"
+    preferred = "UVChecker-mono-4096x4096.png"
     if preferred in files:
         return _checker_enum_id(preferred)
     return _checker_enum_id(files[0])
