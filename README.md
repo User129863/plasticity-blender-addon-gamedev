@@ -85,13 +85,3 @@ Add-on metadata update: Updated bl_info for the fork:
 • Updated fork description
 • Minimum Blender: 4.3+
 
-##Version 1.2.1 Updates
-
-• Improved stability and reliability across the new 1.2 workflow.
-• Added a new option to allow Live Refacet to run with Live Link updates.
-• Fixed regressions in Live Expand and Auto Merge / Reset Seams behavior.
-• Improved seam generation reliability for multi-object and multi-selection workflows.
-• Fixed Pack UV Islands stability issues and overlap-related regressions.
-• Fixed Checker Texture Library and checker assignment edge cases.
-• Improved Sphere + Open Cap behavior.
-• General bug fixes and workflow polish.
