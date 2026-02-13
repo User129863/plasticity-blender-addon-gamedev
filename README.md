@@ -51,21 +51,21 @@ Latest workflow updates focused on multi-object UV tools, improved overlays, and
 ## Version 1.2 updates
 
 Major UI refactor: Replaced the previous dense single-panel layout with a tabbed workflow to reduce visual overload and make operator groups easier to navigate:
-• Pinned
-• Main
-• Refacet
-• Utilities
-• UV / Material / Texture Tools
-• Mesh Tools
-• Preferences
+- Pinned
+- Main
+- Refacet
+- Utilities
+- UV / Material / Texture Tools
+- Mesh Tools
+- Preferences
 
 New: Pinned workflow: Added a dedicated Pinned tab for quick access to frequently used controls/operators, with:
-• Improved default pinned set for common workflows
-• Expanded pin coverage across key tools
+- Improved default pinned set for common workflows
+- Expanded pin coverage across key tools
 
 Auto Merge / Reset Seams on Selection: Renamed for clarity and updated behavior/tooltip:
-• Single click: resets seams on the targeted Plasticity face
-• Click + drag: continuously merges/resets as selection changes
+- Single click: resets seams on the targeted Plasticity face
+- Click + drag: continuously merges/resets as selection changes
 
 Selection-driven seam automation: Auto seam merge/reset no longer depends on Live Expand or Auto Circle and now works reliably with standard selection workflows.
 
@@ -74,14 +74,15 @@ Multi-object seam reliability: Merge seams and auto create seam modes (including
 Multi-object Relax UVs reliability: Relax now applies correctly across selected faces on multiple selected Edit Mode objects and is more stable after repeated seam + unwrap operations.
 
 New: Pack UV Islands operator: Added under UV / Material / Texture Tools → Unwrap for pack-only workflows (no unwrap). Defaults:
-• Average Islands Scale: ON
-• Rotate Islands: OFF
+- Average Islands Scale: ON
+- Rotate Islands: OFF
 
 Preferences tab: Added a dedicated place for global behavior options, including Auto Assign Checker on Selection.
 
 Add-on metadata update: Updated bl_info for the fork:
-• Plasticity Blender Addon Gamedev
-• Version: 1.2.0
-• Updated fork description
-• Minimum Blender: 4.3+
+- Plasticity Blender Addon Gamedev
+- Version: 1.2.0
+- Updated fork description
+- Minimum Blender: 4.3+
+
 
