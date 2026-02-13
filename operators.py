@@ -2653,10 +2653,20 @@ class PackUVIslandsPlasticityOperator(bpy.types.Operator):
         bm.select_flush_mode()
 
     def execute(self, context):
+        global _LIVE_EXPAND_SUPPRESS_AUTO_MERGE, _LIVE_EXPAND_SUSPENDED
+        global _LIVE_EXPAND_PENDING_UNWRAP, _LIVE_EXPAND_LAST_SELECTION_TIME
         objects = self._target_objects(context)
         if not objects:
             self.report({'WARNING'}, "No mesh objects selected")
             return {'CANCELLED'}
+
+        prev_suppress = _LIVE_EXPAND_SUPPRESS_AUTO_MERGE
+        prev_suspended = _LIVE_EXPAND_SUSPENDED
+        _LIVE_EXPAND_SUPPRESS_AUTO_MERGE = True
+        _LIVE_EXPAND_SUSPENDED = True
+        # Drop queued live-unwrap work so pack results are not overwritten right after finish.
+        _LIVE_EXPAND_PENDING_UNWRAP = False
+        _LIVE_EXPAND_LAST_SELECTION_TIME = 0.0
 
         prev_mode = context.mode
         prev_active = context.view_layer.objects.active
@@ -2664,96 +2674,102 @@ class PackUVIslandsPlasticityOperator(bpy.types.Operator):
 
         packed = False
         try:
-            if context.mode != 'OBJECT':
-                if prev_active is None:
-                    context.view_layer.objects.active = objects[0]
-                bpy.ops.object.mode_set(mode='OBJECT')
-
-            valid_objects = []
-            bpy.ops.object.select_all(action='DESELECT')
-            for obj in objects:
-                if obj and obj.name in bpy.data.objects and obj.type == 'MESH':
-                    obj.select_set(True)
-                    valid_objects.append(obj)
-
-            if not valid_objects:
-                self.report({'WARNING'}, "No valid mesh objects found")
-                return {'CANCELLED'}
-
-            context.view_layer.objects.active = valid_objects[0]
-            bpy.ops.object.mode_set(mode='EDIT')
-
-            selection_by_object = {}
-            pin_state_by_object = {}
-            for obj in valid_objects:
-                bm = bmesh.from_edit_mesh(obj.data)
-                selection_by_object[obj.name] = self._snapshot_mesh_selection(bm)
-                uv_layer = bm.loops.layers.uv.active
-                if uv_layer is None:
-                    continue
-                pin_state = _snapshot_pinned_uvs(bm, uv_layer)
-                if pin_state:
-                    pin_state_by_object[obj.name] = pin_state
-                if _clear_pinned_uvs(bm, uv_layer):
-                    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-
             try:
-                tool_settings = context.scene.tool_settings if context.scene else None
-                prev_uv_sync = None
-                if tool_settings:
-                    prev_uv_sync = tool_settings.use_uv_select_sync
-                    tool_settings.use_uv_select_sync = True
-                bpy.ops.mesh.select_all(action='SELECT')
-                if self.average_islands:
-                    _relax_run_uv_op(
-                        context,
-                        bpy.ops.uv.average_islands_scale,
-                        force_uv_sync=False,
-                    )
-                packed = _relax_run_uv_op(
-                    context,
-                    bpy.ops.uv.pack_islands,
-                    force_uv_sync=False,
-                    **_pack_islands_kwargs(
-                        margin=self.pack_margin,
-                        rotate=self.pack_rotate,
-                        merge_overlap=False,
-                    ),
-                )
-            finally:
-                if tool_settings and prev_uv_sync is not None:
-                    tool_settings.use_uv_select_sync = prev_uv_sync
+                if context.mode != 'OBJECT':
+                    if prev_active is None:
+                        context.view_layer.objects.active = objects[0]
+                    bpy.ops.object.mode_set(mode='OBJECT')
+
+                valid_objects = []
+                bpy.ops.object.select_all(action='DESELECT')
+                for obj in objects:
+                    if obj and obj.name in bpy.data.objects and obj.type == 'MESH':
+                        obj.select_set(True)
+                        valid_objects.append(obj)
+
+                if not valid_objects:
+                    self.report({'WARNING'}, "No valid mesh objects found")
+                    return {'CANCELLED'}
+
+                context.view_layer.objects.active = valid_objects[0]
+                bpy.ops.object.mode_set(mode='EDIT')
+
+                selection_by_object = {}
+                pin_state_by_object = {}
                 for obj in valid_objects:
                     bm = bmesh.from_edit_mesh(obj.data)
+                    selection_by_object[obj.name] = self._snapshot_mesh_selection(bm)
                     uv_layer = bm.loops.layers.uv.active
-                    pin_state = pin_state_by_object.get(obj.name)
-                    if uv_layer is not None and pin_state:
-                        _restore_pinned_uvs(bm, uv_layer, pin_state)
-                    selection = selection_by_object.get(obj.name)
-                    if selection is not None:
-                        self._restore_mesh_selection(bm, selection)
-                    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+                    if uv_layer is None:
+                        continue
+                    pin_state = _snapshot_pinned_uvs(bm, uv_layer)
+                    if pin_state:
+                        pin_state_by_object[obj.name] = pin_state
+                    if _clear_pinned_uvs(bm, uv_layer):
+                        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
-            bpy.ops.object.mode_set(mode='OBJECT')
+                try:
+                    tool_settings = context.scene.tool_settings if context.scene else None
+                    prev_uv_sync = None
+                    if tool_settings:
+                        prev_uv_sync = tool_settings.use_uv_select_sync
+                        tool_settings.use_uv_select_sync = True
+                    bpy.ops.mesh.select_all(action='SELECT')
+                    if self.average_islands:
+                        _relax_run_uv_op(
+                            context,
+                            bpy.ops.uv.average_islands_scale,
+                            force_uv_sync=False,
+                        )
+                    packed = _relax_run_uv_op(
+                        context,
+                        bpy.ops.uv.pack_islands,
+                        force_uv_sync=False,
+                        **_pack_islands_kwargs(
+                            margin=self.pack_margin,
+                            rotate=self.pack_rotate,
+                            merge_overlap=False,
+                        ),
+                    )
+                finally:
+                    if tool_settings and prev_uv_sync is not None:
+                        tool_settings.use_uv_select_sync = prev_uv_sync
+                    for obj in valid_objects:
+                        bm = bmesh.from_edit_mesh(obj.data)
+                        uv_layer = bm.loops.layers.uv.active
+                        pin_state = pin_state_by_object.get(obj.name)
+                        if uv_layer is not None and pin_state:
+                            _restore_pinned_uvs(bm, uv_layer, pin_state)
+                        selection = selection_by_object.get(obj.name)
+                        if selection is not None:
+                            self._restore_mesh_selection(bm, selection)
+                        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+                bpy.ops.object.mode_set(mode='OBJECT')
+            finally:
+                if context.mode != 'OBJECT':
+                    try:
+                        bpy.ops.object.mode_set(mode='OBJECT')
+                    except Exception:
+                        pass
+                bpy.ops.object.select_all(action='DESELECT')
+                for obj in prev_selected:
+                    if obj and obj.name in bpy.data.objects:
+                        obj.select_set(True)
+                if prev_active and prev_active.name in bpy.data.objects:
+                    context.view_layer.objects.active = prev_active
+                if prev_mode == 'EDIT_MESH' and prev_active and prev_active.type == 'MESH':
+                    if not prev_active.select_get():
+                        prev_active.select_set(True)
+                    try:
+                        bpy.ops.object.mode_set(mode='EDIT')
+                    except Exception:
+                        pass
         finally:
-            if context.mode != 'OBJECT':
-                try:
-                    bpy.ops.object.mode_set(mode='OBJECT')
-                except Exception:
-                    pass
-            bpy.ops.object.select_all(action='DESELECT')
-            for obj in prev_selected:
-                if obj and obj.name in bpy.data.objects:
-                    obj.select_set(True)
-            if prev_active and prev_active.name in bpy.data.objects:
-                context.view_layer.objects.active = prev_active
-            if prev_mode == 'EDIT_MESH' and prev_active and prev_active.type == 'MESH':
-                if not prev_active.select_get():
-                    prev_active.select_set(True)
-                try:
-                    bpy.ops.object.mode_set(mode='EDIT')
-                except Exception:
-                    pass
+            _LIVE_EXPAND_PENDING_UNWRAP = False
+            _LIVE_EXPAND_LAST_SELECTION_TIME = 0.0
+            _LIVE_EXPAND_SUPPRESS_AUTO_MERGE = prev_suppress
+            _LIVE_EXPAND_SUSPENDED = prev_suspended
 
         if not packed:
             self.report({'WARNING'}, "Pack UV Islands cancelled")
@@ -3341,6 +3357,26 @@ _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
 _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
 _LIVE_REFACET_INTERVAL_DEFAULT = 0.2
 _LIVE_REFACET_TARGET_SELECTION = None
+_LIVE_REFACET_LIVELINK_REVISIONS = {}
+
+
+def note_live_link_update(filename):
+    if not filename:
+        return
+    key = str(filename)
+    _LIVE_REFACET_LIVELINK_REVISIONS[key] = _LIVE_REFACET_LIVELINK_REVISIONS.get(key, 0) + 1
+
+
+def _live_link_revision_token(selected_targets):
+    if not selected_targets:
+        return ()
+    filenames = sorted({str(filename) for filename, _ in selected_targets if filename})
+    if not filenames:
+        return ()
+    return tuple(
+        (filename, int(_LIVE_REFACET_LIVELINK_REVISIONS.get(filename, 0)))
+        for filename in filenames
+    )
 
 
 def _get_live_refacet_interval(scene):
@@ -3411,6 +3447,10 @@ def _build_refacet_signature(context):
     selected = _selected_plasticity_targets(context)
     if not selected:
         return None
+    allow_live_link = bool(
+        getattr(scene, "prop_plasticity_pref_live_refacet_with_live_link", False)
+    )
+    live_link_token = _live_link_revision_token(selected) if allow_live_link else None
 
     advanced = bool(scene.prop_plasticity_ui_show_advanced_facet)
     use_presets = (
@@ -3473,6 +3513,7 @@ def _build_refacet_signature(context):
         advanced,
         base,
         advanced_values,
+        live_link_token,
     )
 
 
@@ -3502,16 +3543,25 @@ def _live_refacet_timer():
 
     interval = _get_live_refacet_interval(scene)
     current_selection = _selected_plasticity_targets(context)
+    allow_live_link = bool(
+        getattr(scene, "prop_plasticity_pref_live_refacet_with_live_link", False)
+    )
     if _LIVE_REFACET_TARGET_SELECTION is None:
         _LIVE_REFACET_TARGET_SELECTION = current_selection
     elif current_selection != _LIVE_REFACET_TARGET_SELECTION:
-        scene.prop_plasticity_live_refacet = False
-        _LIVE_REFACET_TIMER_RUNNING = False
+        if not allow_live_link:
+            scene.prop_plasticity_live_refacet = False
+            _LIVE_REFACET_TIMER_RUNNING = False
+            _LIVE_REFACET_LAST_SIGNATURE = None
+            _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
+            _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
+            _LIVE_REFACET_TARGET_SELECTION = None
+            return None
+        _LIVE_REFACET_TARGET_SELECTION = current_selection
+        # Force a fresh apply pass after targets change in compatibility mode.
         _LIVE_REFACET_LAST_SIGNATURE = None
         _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
         _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
-        _LIVE_REFACET_TARGET_SELECTION = None
-        return None
     if not current_selection:
         return interval
 
@@ -4321,6 +4371,49 @@ def _auto_cylinder_seam_on_selection(
     if len(selected_set) < 2:
         return []
 
+    # Support multiple disconnected cylinder selections on a single mesh by
+    # solving each connected face component independently.
+    def _selected_face_components(face_indices):
+        remaining = set(face_indices)
+        components = []
+        while remaining:
+            seed = next(iter(remaining))
+            stack = [seed]
+            component = set()
+            remaining.remove(seed)
+            while stack:
+                face_index = stack.pop()
+                component.add(face_index)
+                face = bm.faces[face_index]
+                for edge in face.edges:
+                    for linked in edge.link_faces:
+                        linked_index = linked.index
+                        if linked_index in remaining:
+                            remaining.remove(linked_index)
+                            stack.append(linked_index)
+            components.append(component)
+        return components
+
+    components = _selected_face_components(selected_set)
+    if len(components) > 1:
+        changed_all = []
+        for component in components:
+            if len(component) < 2:
+                continue
+            changed = _auto_cylinder_seam_on_selection(
+                bm,
+                component,
+                mode=mode,
+                partial_angle=partial_angle,
+                occluded_only=occluded_only,
+                obj=obj,
+                scene=scene,
+                view_context=view_context,
+            )
+            if changed:
+                changed_all.extend(changed)
+        return changed_all
+
     candidate_axes, _ = _candidate_axes_from_faces(bm, selected_set)
     edges_by_index = {edge.index: edge for edge in bm.edges}
 
@@ -4864,7 +4957,153 @@ def _apply_sphere_uvs(bm, selected_set, uv_layer, uv_map, pole_threshold=0.03):
     return face_offsets
 
 
-def _build_sphere_meridian_seam(bm, selected_set, info):
+def _sphere_uv_distortion_stats(
+    bm,
+    selected_set,
+    uv_layer,
+    info,
+    bins=24,
+):
+    def _tri_edge_anisotropy(v0, v1, v2, uv0, uv1, uv2):
+        eps = 1e-12
+        len_3d = [
+            (v1 - v0).length,
+            (v2 - v1).length,
+            (v0 - v2).length,
+        ]
+        len_uv = [
+            (uv1 - uv0).length,
+            (uv2 - uv1).length,
+            (uv0 - uv2).length,
+        ]
+        if min(len_3d) <= eps or min(len_uv) <= eps:
+            return None
+        mean_3d = sum(len_3d) / 3.0
+        mean_uv = sum(len_uv) / 3.0
+        if mean_3d <= eps or mean_uv <= eps:
+            return None
+        ratios = []
+        for l3, lu in zip(len_3d, len_uv):
+            r = (lu * mean_3d) / (l3 * mean_uv)
+            ratios.append(r)
+        min_ratio = max(min(ratios), eps)
+        max_ratio = max(ratios)
+        return max_ratio / min_ratio
+
+    center = info["center"]
+    axis = info["axis"]
+    x_axis = info["x_axis"]
+    y_axis = info["y_axis"]
+    values = []
+    angle_weights = [0.0] * max(8, int(bins))
+    tau = math.tau
+
+    for face_index in selected_set:
+        face = bm.faces[face_index]
+        loops = list(face.loops)
+        if len(loops) < 3:
+            continue
+        l0 = loops[0]
+        tri_vals = []
+        for idx in range(1, len(loops) - 1):
+            l1 = loops[idx]
+            l2 = loops[idx + 1]
+            dist = _tri_edge_anisotropy(
+                l0.vert.co,
+                l1.vert.co,
+                l2.vert.co,
+                l0[uv_layer].uv.copy(),
+                l1[uv_layer].uv.copy(),
+                l2[uv_layer].uv.copy(),
+            )
+            if dist is not None:
+                tri_vals.append(dist)
+        if not tri_vals:
+            continue
+
+        face_dist = sum(tri_vals) / len(tri_vals)
+        values.append(face_dist)
+
+        face_center = face.calc_center_median()
+        radial = face_center - center
+        radial -= axis * radial.dot(axis)
+        if radial.length <= 1e-8:
+            continue
+        radial.normalize()
+        angle = math.atan2(radial.dot(y_axis), radial.dot(x_axis)) % tau
+        bin_count = len(angle_weights)
+        bin_index = int((angle / tau) * bin_count) % bin_count
+        weight = max(1e-8, face.calc_area()) * face_dist
+        angle_weights[bin_index] += weight
+
+    if not values:
+        return None, None
+
+    sorted_values = sorted(values)
+    p95_index = min(len(sorted_values) - 1, max(0, int((len(sorted_values) - 1) * 0.95)))
+    p95 = sorted_values[p95_index]
+
+    if max(angle_weights) <= 0.0:
+        return p95, None
+    best_bin = max(range(len(angle_weights)), key=lambda i: angle_weights[i])
+    target_angle = ((best_bin + 0.5) / len(angle_weights)) * tau
+    return p95, target_angle
+
+
+def _sphere_seam_mean_angle(info, seam_edges):
+    if not seam_edges:
+        return None
+    axis = info["axis"]
+    center = info["center"]
+    x_axis = info["x_axis"]
+    y_axis = info["y_axis"]
+    sum_x = 0.0
+    sum_y = 0.0
+    count = 0
+    for edge in seam_edges:
+        if not edge or not edge.is_valid:
+            continue
+        midpoint = (edge.verts[0].co + edge.verts[1].co) * 0.5
+        radial = midpoint - center
+        radial -= axis * radial.dot(axis)
+        if radial.length <= 1e-8:
+            continue
+        radial.normalize()
+        sum_x += radial.dot(x_axis)
+        sum_y += radial.dot(y_axis)
+        count += 1
+    if count == 0:
+        return None
+    return math.atan2(sum_y, sum_x) % math.tau
+
+
+def _pick_sphere_third_meridian_angle(base_target, existing_angles):
+    if base_target is None:
+        return None
+    min_sep = math.radians(30.0)
+    candidate_offsets = (
+        0.0,
+        math.radians(20.0),
+        -math.radians(20.0),
+        math.radians(40.0),
+        -math.radians(40.0),
+        math.pi / 2.0,
+        -math.pi / 2.0,
+    )
+    for offset in candidate_offsets:
+        candidate = (base_target + offset) % math.tau
+        if all(_angle_delta(candidate, ang) >= min_sep for ang in existing_angles):
+            return candidate
+    return None
+
+
+def _build_sphere_meridian_seam(
+    bm,
+    selected_set,
+    info,
+    preferred_angle=None,
+    blocked_edge_indices=None,
+):
     selected_verts = {
         vert.index
         for face_index in selected_set
@@ -4952,8 +5191,11 @@ def _build_sphere_meridian_seam(bm, selected_set, info):
     internal_graph = {}
     edge_angles = {}
     edges_by_index = {edge.index: edge for edge in bm.edges}
+    blocked = set(blocked_edge_indices or ())
     for edge in info["internal_edges"]:
         if not edge.is_valid:
+            continue
+        if edge.index in blocked:
             continue
         v1, v2 = edge.verts
         direction = v2.co - v1.co
@@ -4980,10 +5222,24 @@ def _build_sphere_meridian_seam(bm, selected_set, info):
 
     best_edges = []
     best_cost = None
-    samples = 12
     angle_tol = math.radians(18.0)
-    for idx in range(samples):
-        target = (idx / samples) * math.tau
+    if preferred_angle is None:
+        target_angles = [(idx / 12.0) * math.tau for idx in range(12)]
+    else:
+        step = math.radians(12.0)
+        base = preferred_angle % math.tau
+        target_angles = [
+            base,
+            (base + step) % math.tau,
+            (base - step) % math.tau,
+            (base + 2.0 * step) % math.tau,
+            (base - 2.0 * step) % math.tau,
+            (base + math.pi) % math.tau,
+            (base + math.pi + step) % math.tau,
+            (base + math.pi - step) % math.tau,
+        ]
+
+    for target in target_angles:
         start_set = filter_by_angle(start_candidates, target, angle_tol)
         end_set = filter_by_angle(end_candidates, target, angle_tol)
         if not start_set or not end_set:
@@ -5023,6 +5279,46 @@ def _auto_sphere_seam_on_selection(
     if len(selected_set) < 2:
         return [], False
 
+    # Support multiple disconnected sphere selections on a single mesh by
+    # solving each connected face component independently.
+    def _selected_face_components(face_indices):
+        remaining = set(face_indices)
+        components = []
+        while remaining:
+            seed = next(iter(remaining))
+            stack = [seed]
+            component = set()
+            remaining.remove(seed)
+            while stack:
+                face_index = stack.pop()
+                component.add(face_index)
+                face = bm.faces[face_index]
+                for edge in face.edges:
+                    for linked in edge.link_faces:
+                        linked_index = linked.index
+                        if linked_index in remaining:
+                            remaining.remove(linked_index)
+                            stack.append(linked_index)
+            components.append(component)
+        return components
+
+    components = _selected_face_components(selected_set)
+    if len(components) > 1:
+        changed_all = []
+        projected_any = False
+        for component in components:
+            if len(component) < 2:
+                continue
+            changed_component, projected_component = _auto_sphere_seam_on_selection(
+                bm,
+                component,
+                mode=mode,
+            )
+            if changed_component:
+                changed_all.extend(changed_component)
+            projected_any = projected_any or projected_component
+        return changed_all, projected_any
+
     info = _sphere_projection_info(bm, selected_set)
     if info is None:
         return [], False
@@ -5034,11 +5330,92 @@ def _auto_sphere_seam_on_selection(
     face_offsets = _apply_sphere_uvs(bm, selected_set, uv_layer, info["uv_map"])
 
     changed = []
-    seam_edges = _build_sphere_meridian_seam(bm, selected_set, info)
-    for edge in seam_edges:
+    distortion_p95, target_angle = _sphere_uv_distortion_stats(
+        bm, selected_set, uv_layer, info
+    )
+
+    first_seam = _build_sphere_meridian_seam(
+        bm,
+        selected_set,
+        info,
+        preferred_angle=target_angle,
+    )
+    for edge in first_seam:
         if edge.is_valid and not edge.seam:
             edge.seam = True
             changed.append(edge.index)
+
+    first_angle = _sphere_seam_mean_angle(info, first_seam)
+    blocked = {edge.index for edge in first_seam if edge and edge.is_valid}
+
+    if mode == 'SPHERE':
+        # Closed spheres need at least two opposite meridians to avoid severe
+        # distortion concentration around a single singular seam.
+        second_pref = None
+        if first_angle is not None:
+            second_pref = (first_angle + math.pi) % math.tau
+        elif target_angle is not None:
+            second_pref = (target_angle + math.pi) % math.tau
+
+        second_seam = _build_sphere_meridian_seam(
+            bm,
+            selected_set,
+            info,
+            preferred_angle=second_pref,
+            blocked_edge_indices=blocked,
+        )
+        for edge in second_seam:
+            if edge.is_valid and not edge.seam:
+                edge.seam = True
+                changed.append(edge.index)
+        blocked.update(
+            edge.index for edge in second_seam if edge and edge.is_valid
+        )
+
+        if distortion_p95 is not None and distortion_p95 > 1.30:
+            existing_angles = []
+            if first_angle is not None:
+                existing_angles.append(first_angle)
+            second_angle = _sphere_seam_mean_angle(info, second_seam)
+            if second_angle is not None:
+                existing_angles.append(second_angle)
+            third_pref = _pick_sphere_third_meridian_angle(target_angle, existing_angles)
+            if third_pref is not None:
+                third_seam = _build_sphere_meridian_seam(
+                    bm,
+                    selected_set,
+                    info,
+                    preferred_angle=third_pref,
+                    blocked_edge_indices=blocked,
+                )
+                for edge in third_seam:
+                    if edge.is_valid and not edge.seam:
+                        edge.seam = True
+                        changed.append(edge.index)
+                blocked.update(
+                    edge.index for edge in third_seam if edge and edge.is_valid
+                )
+    elif distortion_p95 is not None and distortion_p95 > 1.35:
+        # Open-cap modes get adaptive extra seam only when needed.
+        second_edges = _build_sphere_meridian_seam(
+            bm,
+            selected_set,
+            info,
+            preferred_angle=target_angle,
+            blocked_edge_indices=blocked,
+        )
+        if not second_edges and target_angle is not None:
+            second_edges = _build_sphere_meridian_seam(
+                bm,
+                selected_set,
+                info,
+                preferred_angle=(target_angle + math.pi) % math.tau,
+                blocked_edge_indices=blocked,
+            )
+        for edge in second_edges:
+            if edge.is_valid and not edge.seam:
+                edge.seam = True
+                changed.append(edge.index)
 
     if mode in ('SPHERE_CAP', 'SPHERE_OPEN'):
         if info["boundary_edges"]:
@@ -5123,18 +5500,9 @@ def _maybe_live_unwrap(context, force=False):
         return False
     _LIVE_EXPAND_LAST_UNWRAP_TIME = now
 
+    sphere_projected = False
     if seam_mode in ('SPHERE', 'SPHERE_CAP', 'SPHERE_OPEN'):
-        if _sphere_project_selected_uvs(context):
-            _LIVE_EXPAND_PENDING_UNWRAP = False
-            if window_manager:
-                for window in window_manager.windows:
-                    screen = window.screen
-                    if screen is None:
-                        continue
-                    for area in screen.areas:
-                        if area.type in {"VIEW_3D", "IMAGE_EDITOR"}:
-                            area.tag_redraw()
-            return True
+        sphere_projected = _sphere_project_selected_uvs(context)
 
     candidates = []
     if window_manager:
@@ -5215,6 +5583,17 @@ def _maybe_live_unwrap(context, force=False):
             result = bpy.ops.uv.unwrap(**unwrap_kwargs)
 
         if unwrap_cancelled(result):
+            if sphere_projected:
+                _LIVE_EXPAND_PENDING_UNWRAP = False
+                if window_manager:
+                    for window in window_manager.windows:
+                        screen = window.screen
+                        if screen is None:
+                            continue
+                        for area in screen.areas:
+                            if area.type in {"VIEW_3D", "IMAGE_EDITOR"}:
+                                area.tag_redraw()
+                return True
             _LIVE_EXPAND_PENDING_UNWRAP = True
             return False
         if window_manager:
@@ -5231,6 +5610,9 @@ def _maybe_live_unwrap(context, force=False):
                 pass
         return True
     except Exception:
+        if sphere_projected:
+            _LIVE_EXPAND_PENDING_UNWRAP = False
+            return True
         return False
     finally:
         tool_settings.use_uv_select_sync = prev_uv_sync
@@ -5269,14 +5651,43 @@ def _sphere_project_selected_uvs(context):
             continue
 
         selected_set = {face.index for face in target_faces}
-        info = _sphere_projection_info(bm, selected_set)
-        if info is None:
+        if len(selected_set) < 2:
             continue
 
-        _apply_sphere_uvs(bm, selected_set, uv_layer, info["uv_map"])
+        def _selected_face_components(face_indices):
+            remaining = set(face_indices)
+            components = []
+            while remaining:
+                seed = next(iter(remaining))
+                stack = [seed]
+                component = set()
+                remaining.remove(seed)
+                while stack:
+                    face_index = stack.pop()
+                    component.add(face_index)
+                    face = bm.faces[face_index]
+                    for edge in face.edges:
+                        for linked in edge.link_faces:
+                            linked_index = linked.index
+                            if linked_index in remaining:
+                                remaining.remove(linked_index)
+                                stack.append(linked_index)
+                components.append(component)
+            return components
 
-        bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-        updated = True
+        any_component_updated = False
+        for component in _selected_face_components(selected_set):
+            if len(component) < 2:
+                continue
+            info = _sphere_projection_info(bm, component)
+            if info is None:
+                continue
+            _apply_sphere_uvs(bm, component, uv_layer, info["uv_map"])
+            any_component_updated = True
+
+        if any_component_updated:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            updated = True
     return updated
 
 

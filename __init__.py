@@ -46,21 +46,31 @@ def save_presets():
 @persistent
 def load_presets(dummy):
     scene = bpy.context.scene
+    if scene is None:
+        return
 
     # Clear existing presets
     scene.refacet_presets.clear()
-    
-    if scene is None or not os.path.exists(PRESET_FILE_PATH):        
-        return
-    with open(PRESET_FILE_PATH, 'r') as f:
-        presets = json.load(f)    
-    
-    for preset_dict in presets:
-        preset = scene.refacet_presets.add()
-        preset.from_dict(preset_dict)            
 
-    # Ensure checker library defaults are initialized after loading
+    if os.path.exists(PRESET_FILE_PATH):
+        try:
+            with open(PRESET_FILE_PATH, 'r') as f:
+                presets = json.load(f)
+        except Exception:
+            presets = []
+
+        for preset_dict in presets:
+            try:
+                preset = scene.refacet_presets.add()
+                preset.from_dict(preset_dict)
+            except Exception:
+                continue
+
+    # Keep runtime behavior in sync with persisted scene toggles, even when
+    # there is no preset file.
     _initialize_checker_scene(scene)
+    _sync_live_expand_runtime(bpy.context)
+    _schedule_live_expand_sync()
 
 def update_and_save_preset(self, context):
     save_presets()
@@ -113,6 +123,10 @@ def update_density_scene(self, context):
 
 LIVE_EXPAND_CIRCLE_RADIUS = 5
 _LAST_CONTEXT_MODE = None
+_MODE_CHANGE_RESET_TOKEN = 0
+_OBJECT_MODE_RESET_DELAY = 0.25
+_LIVE_EXPAND_SYNC_SCHEDULED = False
+_LIVE_EXPAND_SYNC_RETRIES_LEFT = 0
 _CHECKER_AUTO_ASSIGN_SCHEDULED = False
 _CHECKER_INIT_SCHEDULED = False
 
@@ -124,7 +138,10 @@ def update_live_expand(self, context):
             operators.ensure_live_expand_overlay()
         operators.set_live_expand_active_view(context)
         if getattr(context.scene, "prop_plasticity_live_expand_auto_circle", False):
-            _set_view3d_tool("builtin.select_circle", circle_radius=LIVE_EXPAND_CIRCLE_RADIUS)
+            if context is not None and getattr(context, "mode", None) == 'EDIT_MESH':
+                _set_view3d_tool("builtin.select_circle", circle_radius=LIVE_EXPAND_CIRCLE_RADIUS)
+            else:
+                _set_view3d_tool("builtin.select_box")
     else:
         if getattr(context.scene, "prop_plasticity_live_expand_auto_circle", False):
             _set_view3d_tool("builtin.select_box")
@@ -146,9 +163,14 @@ def update_live_expand_auto_merge_seams(self, context):
         operators.stop_live_expand_timer()
 
 def update_live_expand_auto_circle(self, context):
-    if self.prop_plasticity_live_expand_auto_circle and self.prop_plasticity_live_expand:
+    if (
+        self.prop_plasticity_live_expand_auto_circle
+        and self.prop_plasticity_live_expand
+        and context is not None
+        and getattr(context, "mode", None) == 'EDIT_MESH'
+    ):
         _set_view3d_tool("builtin.select_circle", circle_radius=LIVE_EXPAND_CIRCLE_RADIUS)
-    elif not self.prop_plasticity_live_expand_auto_circle:
+    else:
         _set_view3d_tool("builtin.select_box")
 
 
@@ -160,24 +182,94 @@ def update_live_expand_edge_highlight(self, context):
         operators.stop_live_expand_overlay()
 
 
-def _on_mode_change(scene, depsgraph):
-    global _LAST_CONTEXT_MODE
-    context = bpy.context
-    mode = getattr(context, "mode", None)
-    if mode == _LAST_CONTEXT_MODE:
-        return
-    _LAST_CONTEXT_MODE = mode
-    if mode != 'OBJECT':
-        return
-    scene = context.scene
+def _sync_live_expand_runtime(context):
+    scene = getattr(context, "scene", None) if context else None
     if scene is None:
         return
-    if getattr(scene, "prop_plasticity_live_expand_auto_circle", False):
-        _set_view3d_tool("builtin.select_box")
-    if getattr(scene, "prop_plasticity_live_expand_auto_merge_seams", False):
-        scene.prop_plasticity_live_expand_auto_merge_seams = False
-    if getattr(scene, "prop_plasticity_auto_seam_mode", None) != 'OFF':
-        scene.prop_plasticity_auto_seam_mode = 'OFF'
+
+    # Re-apply the same callback logic as a manual toggle so persisted scene
+    # values always restore runtime state (timer/overlay/tool) on startup.
+    try:
+        update_live_expand(scene, context)
+    except Exception:
+        pass
+    try:
+        update_live_expand_auto_merge_seams(scene, context)
+    except Exception:
+        pass
+    try:
+        update_live_expand_edge_highlight(scene, context)
+    except Exception:
+        pass
+
+
+def _run_live_expand_sync_timer():
+    global _LIVE_EXPAND_SYNC_SCHEDULED, _LIVE_EXPAND_SYNC_RETRIES_LEFT
+    try:
+        _sync_live_expand_runtime(bpy.context)
+    except Exception:
+        pass
+
+    _LIVE_EXPAND_SYNC_RETRIES_LEFT -= 1
+    if _LIVE_EXPAND_SYNC_RETRIES_LEFT > 0:
+        return 0.25
+
+    _LIVE_EXPAND_SYNC_SCHEDULED = False
+    _LIVE_EXPAND_SYNC_RETRIES_LEFT = 0
+    return None
+
+
+def _schedule_live_expand_sync(retries=20):
+    global _LIVE_EXPAND_SYNC_SCHEDULED, _LIVE_EXPAND_SYNC_RETRIES_LEFT
+    _LIVE_EXPAND_SYNC_RETRIES_LEFT = max(_LIVE_EXPAND_SYNC_RETRIES_LEFT, int(retries))
+    if _LIVE_EXPAND_SYNC_SCHEDULED:
+        return
+    _LIVE_EXPAND_SYNC_SCHEDULED = True
+    bpy.app.timers.register(_run_live_expand_sync_timer, first_interval=0.1)
+
+
+def _on_mode_change(scene, depsgraph):
+    global _LAST_CONTEXT_MODE, _MODE_CHANGE_RESET_TOKEN
+    context = bpy.context
+    mode = getattr(context, "mode", None)
+    prev_mode = _LAST_CONTEXT_MODE
+    if mode == prev_mode:
+        return
+    _LAST_CONTEXT_MODE = mode
+    _MODE_CHANGE_RESET_TOKEN += 1
+    token = _MODE_CHANGE_RESET_TOKEN
+    if mode in {'EDIT_MESH', 'OBJECT'}:
+        _sync_live_expand_runtime(context)
+    if mode == 'EDIT_MESH':
+        return
+    if mode != 'OBJECT':
+        return
+    if prev_mode != 'EDIT_MESH':
+        return
+
+    # Debounce Object-mode resets so temporary operator mode flips do not
+    # disable Live Expand/Auto Merge during normal tool execution.
+    def _deferred_object_mode_reset():
+        if token != _MODE_CHANGE_RESET_TOKEN:
+            return None
+        ctx = bpy.context
+        if getattr(ctx, "mode", None) != 'OBJECT':
+            return None
+        local_scene = getattr(ctx, "scene", None)
+        if local_scene is None:
+            return None
+        if getattr(local_scene, "prop_plasticity_live_expand_auto_circle", False):
+            _set_view3d_tool("builtin.select_box")
+        if getattr(local_scene, "prop_plasticity_live_expand_auto_merge_seams", False):
+            local_scene.prop_plasticity_live_expand_auto_merge_seams = False
+        if getattr(local_scene, "prop_plasticity_auto_seam_mode", None) != 'OFF':
+            local_scene.prop_plasticity_auto_seam_mode = 'OFF'
+        return None
+
+    try:
+        bpy.app.timers.register(_deferred_object_mode_reset, first_interval=_OBJECT_MODE_RESET_DELAY)
+    except Exception:
+        pass
 
 def update_live_refacet(self, context):
     if not self.prop_plasticity_live_refacet:
@@ -255,6 +347,12 @@ def _schedule_checker_auto_assign():
 def _initialize_checker_scene(scene):
     if scene is None:
         return
+    try:
+        seam_mode = getattr(scene, "prop_plasticity_auto_seam_mode", None)
+        if seam_mode in {"SPHERE", "SPHERE_CAP"}:
+            scene.prop_plasticity_auto_seam_mode = "SPHERE_OPEN"
+    except Exception:
+        pass
     checker_source = getattr(scene, "prop_plasticity_checker_source", None)
     if checker_source not in {"LIBRARY", "FILE"}:
         scene.prop_plasticity_checker_source = "LIBRARY"
@@ -326,6 +424,17 @@ def update_checker_image(self, context):
     if not checker_image or checker_image == "NONE":
         return
     _schedule_checker_auto_assign()
+
+
+def update_live_refacet_with_live_link(self, context):
+    scene = getattr(context, "scene", None) if context else None
+    if scene is None:
+        return
+    if not getattr(scene, "prop_plasticity_live_refacet", False):
+        return
+    # Re-arm timer state so changed compatibility mode is applied immediately.
+    operators.stop_live_refacet_timer()
+    operators.ensure_live_refacet_timer()
 
 def update_util_auto_mark_edges(self, context):
     return
@@ -693,8 +802,9 @@ def register():
         items=[
             ('OFF', "Off", "Do not auto-create seams"),
             ('CYLINDER', "Cylinder", "Create a seam for cylindrical selections"),
-            ('SPHERE', "Sphere", "Create a meridian seam for closed spheres"),
-            ('SPHERE_CAP', "Sphere + Polar Cap", "Create a meridian seam plus a polar/rim seam"),
+            # Temporarily hidden: quality is not production-ready yet.
+            # ('SPHERE', "Sphere", "Create a meridian seam for closed spheres"),
+            # ('SPHERE_CAP', "Sphere + Polar Cap", "Create a meridian seam plus a polar/rim seam"),
             ('SPHERE_OPEN', "Sphere + Open Cap", "Create a meridian seam plus an open rim seam"),
         ],
         default='CYLINDER',
@@ -888,6 +998,15 @@ def register():
         description="Automatically assign the selected checker texture to selected mesh objects/faces",
         default=False,
     )
+    bpy.types.Scene.prop_plasticity_pref_live_refacet_with_live_link = bpy.props.BoolProperty(
+        name="Allow Live Refacet with Live Link",
+        description=(
+            "Keep Live Refacet active when Plasticity target selection changes via Live Link. "
+            "Can disrupt UV, seam, material, and attribute workflows"
+        ),
+        default=False,
+        update=update_live_refacet_with_live_link,
+    )
     bpy.types.Scene.prop_plasticity_checker_custom_path = bpy.props.StringProperty(
         name="Checker Image",
         subtype="FILE_PATH",
@@ -980,18 +1099,31 @@ def register():
     except Exception:
         pass
     _schedule_checker_init()
+    try:
+        _sync_live_expand_runtime(bpy.context)
+    except Exception:
+        pass
+    _schedule_live_expand_sync()
 
     print("Plasticity client registered")
 
 def unregister():
     print("Unregistering Plasticity client")
     global _CHECKER_INIT_SCHEDULED
+    global _LIVE_EXPAND_SYNC_SCHEDULED, _LIVE_EXPAND_SYNC_RETRIES_LEFT
     if _CHECKER_INIT_SCHEDULED:
         try:
             bpy.app.timers.unregister(_run_checker_init_timer)
         except Exception:
             pass
         _CHECKER_INIT_SCHEDULED = False
+    if _LIVE_EXPAND_SYNC_SCHEDULED:
+        try:
+            bpy.app.timers.unregister(_run_live_expand_sync_timer)
+        except Exception:
+            pass
+        _LIVE_EXPAND_SYNC_SCHEDULED = False
+    _LIVE_EXPAND_SYNC_RETRIES_LEFT = 0
     operators.stop_live_expand_timer()
     operators.stop_live_refacet_timer()
     operators.stop_live_expand_overlay()
@@ -1152,6 +1284,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_checker_source
     del bpy.types.Scene.prop_plasticity_checker_image
     del bpy.types.Scene.prop_plasticity_pref_auto_assign_checker_on_select
+    del bpy.types.Scene.prop_plasticity_pref_live_refacet_with_live_link
     del bpy.types.Scene.prop_plasticity_checker_custom_path
     del bpy.types.Scene.prop_plasticity_facet_min_width
     del bpy.types.Scene.prop_plasticity_facet_max_width
