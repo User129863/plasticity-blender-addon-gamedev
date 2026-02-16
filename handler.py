@@ -353,6 +353,11 @@ class SceneHandler:
         bpy.context.window_manager.plasticity_busy = False
         filename = message["filename"]
         version = message["version"]
+        try:
+            from . import operators
+            operators.note_live_link_update(filename)
+        except Exception:
+            pass
 
         self.report({'INFO'}, "Updating " + filename +
                     " to version " + str(version))

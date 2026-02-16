@@ -2,7 +2,7 @@ bl_info = {
     "name": "Plasticity Blender Addon Gamedev",
     "description": "Game development focused fork of the Plasticity Blender add-on.",
     "author": "Nick Kallen, User129863",
-    "version": (1, 2, 0),
+    "version": (1, 2, 2),
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Plasticity",
     "category": "Object",
@@ -281,6 +281,7 @@ def update_live_refacet(self, context):
         return
     operators.ensure_live_refacet_timer()
 
+
 def update_checker_custom_path(self, context):
     if context.scene.prop_plasticity_checker_custom_path:
         context.scene.prop_plasticity_checker_source = "FILE"
@@ -426,13 +427,12 @@ def update_checker_image(self, context):
     _schedule_checker_auto_assign()
 
 
-def update_live_refacet_with_live_link(self, context):
+def update_live_refacet_only_selected(self, context):
     scene = getattr(context, "scene", None) if context else None
     if scene is None:
         return
     if not getattr(scene, "prop_plasticity_live_refacet", False):
         return
-    # Re-arm timer state so changed compatibility mode is applied immediately.
     operators.stop_live_refacet_timer()
     operators.ensure_live_refacet_timer()
 
@@ -863,6 +863,12 @@ def register():
         default=False,
         update=update_live_refacet,
     )
+    bpy.types.Scene.prop_plasticity_live_refacet_only_selected = bpy.props.BoolProperty(
+        name="Only Selected",
+        description="When enabled, live refacet affects only currently selected Plasticity objects",
+        default=True,
+        update=update_live_refacet_only_selected,
+    )
     bpy.types.Scene.prop_plasticity_live_refacet_interval = bpy.props.FloatProperty(
         name="Live Refacet Interval",
         description="Seconds between live refacet checks",
@@ -997,15 +1003,6 @@ def register():
         name="Auto Assign Checker on Selection",
         description="Automatically assign the selected checker texture to selected mesh objects/faces",
         default=False,
-    )
-    bpy.types.Scene.prop_plasticity_pref_live_refacet_with_live_link = bpy.props.BoolProperty(
-        name="Allow Live Refacet with Live Link",
-        description=(
-            "Keep Live Refacet active when Plasticity target selection changes via Live Link. "
-            "Can disrupt UV, seam, material, and attribute workflows"
-        ),
-        default=False,
-        update=update_live_refacet_with_live_link,
     )
     bpy.types.Scene.prop_plasticity_checker_custom_path = bpy.props.StringProperty(
         name="Checker Image",
@@ -1212,6 +1209,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_ui_show_advanced_facet
     del bpy.types.Scene.prop_plasticity_ui_show_refacet
     del bpy.types.Scene.prop_plasticity_live_refacet
+    del bpy.types.Scene.prop_plasticity_live_refacet_only_selected
     del bpy.types.Scene.prop_plasticity_live_refacet_interval
     del bpy.types.Scene.prop_plasticity_ui_tab
     del bpy.types.Scene.prop_plasticity_ui_show_utilities
@@ -1284,7 +1282,6 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_checker_source
     del bpy.types.Scene.prop_plasticity_checker_image
     del bpy.types.Scene.prop_plasticity_pref_auto_assign_checker_on_select
-    del bpy.types.Scene.prop_plasticity_pref_live_refacet_with_live_link
     del bpy.types.Scene.prop_plasticity_checker_custom_path
     del bpy.types.Scene.prop_plasticity_facet_min_width
     del bpy.types.Scene.prop_plasticity_facet_max_width

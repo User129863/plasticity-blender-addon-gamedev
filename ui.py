@@ -689,6 +689,8 @@ class PlasticityPanel(bpy.types.Panel):
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_refacet"), emboss=False)
                 if context.mode == 'OBJECT':
                     row = col.row(align=True)
+                    row.prop(scene, "prop_plasticity_live_refacet_only_selected", text="Only Selected")
+                    row = col.row(align=True)
                     row.prop(scene, "prop_plasticity_live_refacet", text="Live Refacet Mode")
                     if scene.prop_plasticity_live_refacet:
                         live_col = col.column(align=True)
@@ -1117,18 +1119,6 @@ class PlasticityPanel(bpy.types.Panel):
             elif active_tab == "PREFERENCES":
                 box = layout.box()
                 col = box.column(align=True)
-
-                refacet_box = col.box()
-                refacet_col = refacet_box.column(align=True)
-                refacet_col.label(text="Refacet")
-                refacet_col.prop(
-                    scene,
-                    "prop_plasticity_pref_live_refacet_with_live_link",
-                    text="Allow Live Refacet with Live Link",
-                )
-                if scene.prop_plasticity_pref_live_refacet_with_live_link:
-                    refacet_col.label(text="Warning: Refacet can overwrite UV/seam/material data.", icon='ERROR')
-                    refacet_col.label(text="Use for preview workflows; disable before final UV work.")
 
                 category_box = col.box()
                 category_col = category_box.column(align=True)

@@ -3367,15 +3367,12 @@ def note_live_link_update(filename):
     _LIVE_REFACET_LIVELINK_REVISIONS[key] = _LIVE_REFACET_LIVELINK_REVISIONS.get(key, 0) + 1
 
 
-def _live_link_revision_token(selected_targets):
-    if not selected_targets:
-        return ()
-    filenames = sorted({str(filename) for filename, _ in selected_targets if filename})
-    if not filenames:
+def _live_link_revision_snapshot():
+    if not _LIVE_REFACET_LIVELINK_REVISIONS:
         return ()
     return tuple(
-        (filename, int(_LIVE_REFACET_LIVELINK_REVISIONS.get(filename, 0)))
-        for filename in filenames
+        (str(filename), int(revision))
+        for filename, revision in sorted(_LIVE_REFACET_LIVELINK_REVISIONS.items())
     )
 
 
@@ -3438,19 +3435,122 @@ def _selected_plasticity_targets(context):
     return tuple(selected)
 
 
-def _build_refacet_signature(context):
+def _scene_plasticity_targets(scene):
+    if scene is None:
+        return tuple()
+    targets = []
+    for obj in scene.objects:
+        if obj.type != 'MESH':
+            continue
+        if "plasticity_id" not in obj.keys():
+            continue
+        filename = obj.get("plasticity_filename")
+        plasticity_id = obj.get("plasticity_id")
+        if filename is None or plasticity_id is None:
+            continue
+        targets.append((filename, int(plasticity_id)))
+    targets.sort()
+    return tuple(targets)
+
+
+def _live_refacet_only_selected(scene):
+    if scene is None:
+        return True
+    return bool(getattr(scene, "prop_plasticity_live_refacet_only_selected", True))
+
+
+def _resolve_target_objects(context, selected_targets):
+    if not selected_targets:
+        return []
+    wanted = set()
+    for filename, plasticity_id in selected_targets:
+        if filename is None or plasticity_id is None:
+            continue
+        try:
+            wanted.add((str(filename), int(plasticity_id)))
+        except Exception:
+            continue
+    if not wanted:
+        return []
+
+    scene = getattr(context, "scene", None)
+    object_iter = scene.objects if scene else bpy.data.objects
+    objects = []
+    for obj in object_iter:
+        if obj.type != 'MESH':
+            continue
+        filename = obj.get("plasticity_filename")
+        plasticity_id = obj.get("plasticity_id")
+        if filename is None or plasticity_id is None:
+            continue
+        try:
+            key = (str(filename), int(plasticity_id))
+        except Exception:
+            continue
+        if key in wanted:
+            objects.append(obj)
+    return objects
+
+
+def _run_refacet_with_target_override(context, selected_targets):
+    target_objects = _resolve_target_objects(context, selected_targets)
+    if not target_objects:
+        return {'CANCELLED'}
+
+    view_layer = getattr(context, "view_layer", None)
+    if view_layer is None:
+        return {'CANCELLED'}
+
+    previous_active = view_layer.objects.active
+    previous_selection = list(context.selected_objects)
+    try:
+        for obj in previous_selection:
+            try:
+                obj.select_set(False)
+            except Exception:
+                continue
+
+        selected_objects = []
+        for obj in target_objects:
+            try:
+                obj.select_set(True)
+                selected_objects.append(obj)
+            except Exception:
+                continue
+        if not selected_objects:
+            return {'CANCELLED'}
+
+        try:
+            view_layer.objects.active = selected_objects[0]
+        except Exception:
+            pass
+
+        if not bpy.ops.wm.refacet.poll():
+            return {'CANCELLED'}
+        return bpy.ops.wm.refacet()
+    finally:
+        for obj in list(context.selected_objects):
+            try:
+                obj.select_set(False)
+            except Exception:
+                continue
+        for obj in previous_selection:
+            try:
+                obj.select_set(True)
+            except Exception:
+                continue
+        try:
+            view_layer.objects.active = previous_active
+        except Exception:
+            pass
+
+
+def _build_refacet_settings_signature(context):
     if context is None:
         return None
     scene = context.scene
     if scene is None:
         return None
-    selected = _selected_plasticity_targets(context)
-    if not selected:
-        return None
-    allow_live_link = bool(
-        getattr(scene, "prop_plasticity_pref_live_refacet_with_live_link", False)
-    )
-    live_link_token = _live_link_revision_token(selected) if allow_live_link else None
 
     advanced = bool(scene.prop_plasticity_ui_show_advanced_facet)
     use_presets = (
@@ -3513,7 +3613,6 @@ def _build_refacet_signature(context):
         advanced,
         base,
         advanced_values,
-        live_link_token,
     )
 
 
@@ -3542,51 +3641,51 @@ def _live_refacet_timer():
         return None
 
     interval = _get_live_refacet_interval(scene)
-    current_selection = _selected_plasticity_targets(context)
-    allow_live_link = bool(
-        getattr(scene, "prop_plasticity_pref_live_refacet_with_live_link", False)
+    settings_signature = _build_refacet_settings_signature(context)
+    if settings_signature is None:
+        _LIVE_REFACET_LAST_SIGNATURE = None
+        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
+        _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
+        return interval
+    live_link_signature = _live_link_revision_snapshot()
+    trigger_signature = (
+        settings_signature,
+        live_link_signature,
     )
-    if _LIVE_REFACET_TARGET_SELECTION is None:
-        _LIVE_REFACET_TARGET_SELECTION = current_selection
-    elif current_selection != _LIVE_REFACET_TARGET_SELECTION:
-        if not allow_live_link:
-            scene.prop_plasticity_live_refacet = False
-            _LIVE_REFACET_TIMER_RUNNING = False
-            _LIVE_REFACET_LAST_SIGNATURE = None
-            _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
-            _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
-            _LIVE_REFACET_TARGET_SELECTION = None
-            return None
-        _LIVE_REFACET_TARGET_SELECTION = current_selection
-        # Force a fresh apply pass after targets change in compatibility mode.
-        _LIVE_REFACET_LAST_SIGNATURE = None
-        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
-        _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
-    if not current_selection:
+
+    if _LIVE_REFACET_LAST_SIGNATURE is None:
+        _LIVE_REFACET_LAST_SIGNATURE = trigger_signature
+        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = trigger_signature
+        _LIVE_REFACET_LAST_CHANGE_TIME = time.monotonic()
         return interval
 
-    signature = _build_refacet_signature(context)
-    if signature is None:
-        _LIVE_REFACET_LAST_SIGNATURE = None
-        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = None
-        _LIVE_REFACET_LAST_CHANGE_TIME = 0.0
+    if trigger_signature != _LIVE_REFACET_LAST_SIGNATURE:
+        _LIVE_REFACET_LAST_SIGNATURE = trigger_signature
+        _LIVE_REFACET_LAST_CHANGE_TIME = time.monotonic()
+
+    current_selection = _selected_plasticity_targets(context)
+    only_selected = _live_refacet_only_selected(scene)
+    if only_selected:
+        active_targets = current_selection
+    else:
+        active_targets = _scene_plasticity_targets(scene)
+
+    if not active_targets:
+        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = trigger_signature
         return interval
 
-    now = time.monotonic()
-    if signature != _LIVE_REFACET_LAST_SIGNATURE:
-        _LIVE_REFACET_LAST_SIGNATURE = signature
-        _LIVE_REFACET_LAST_CHANGE_TIME = now
-        return interval
-
-    if _LIVE_REFACET_LAST_APPLIED_SIGNATURE == signature:
+    if _LIVE_REFACET_LAST_APPLIED_SIGNATURE == trigger_signature:
         return interval
     if getattr(context.window_manager, "plasticity_busy", False):
         return interval
-    if not bpy.ops.wm.refacet.poll():
-        return interval
-    result = bpy.ops.wm.refacet()
+    if only_selected:
+        if not bpy.ops.wm.refacet.poll():
+            return interval
+        result = bpy.ops.wm.refacet()
+    else:
+        result = _run_refacet_with_target_override(context, active_targets)
     if isinstance(result, set) and 'FINISHED' in result:
-        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = signature
+        _LIVE_REFACET_LAST_APPLIED_SIGNATURE = trigger_signature
     return interval
 
 _LIVE_EXPAND_TIMER_RUNNING = False
