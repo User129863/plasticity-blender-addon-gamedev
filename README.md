@@ -114,7 +114,7 @@ Add-on metadata update: Updated bl_info for the fork:
 
 - New (Experimental): Live Expand `Auto Select Cylinders` for faster cylindrical surface selection workflows.
 - New (Experimental): `Cylinder Min Wrap Angle` setting to tune cylinder auto-selection sensitivity.
-- Live Expand Selection: added fast Ctrl-subtract behavior (inverse selection action) for Circle Select, Auto Circle Select Mode, and Box/Rectangle selection workflows.
+- Live Expand Selection: when Live Expand mode is ON, hold Ctrl while using Circle Select, Auto Circle Select Mode, or Box/Rectangle selection to unselect Plasticity surfaces.
 - General bug fixes and stability improvements.
 
 https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
