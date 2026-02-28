@@ -2,8 +2,12 @@
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
 </a>
 
-[![Watch on YouTube](https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg)](https://www.youtube.com/watch?v=Bk0S0jZEzRM)
-Game Pad Model by: Kuechmeister Swagger
+<p>
+  <a href="https://www.youtube.com/watch?v=Bk0S0jZEzRM">
+    <img src="https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg" alt="Watch on YouTube">
+  </a><br>
+  <sub>Gamepad Model by: Kuechmeister Swagger</sub>
+</p>
 
 # plasticity-blender-addon-gamedev
 
