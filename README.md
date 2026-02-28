@@ -3,6 +3,7 @@
 </a>
 
 [![Watch on YouTube](https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg)](https://www.youtube.com/watch?v=Bk0S0jZEzRM)
+Game Pad Model by: Kuechmeister Swagger
 
 # plasticity-blender-addon-gamedev
 
