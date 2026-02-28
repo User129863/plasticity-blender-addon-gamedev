@@ -109,3 +109,4 @@ Add-on metadata update: Updated bl_info for the fork:
 - New (Experimental): `Cylinder Min Wrap Angle` setting to tune cylinder auto-selection sensitivity.
 - Live Expand Selection: when Live Expand mode is ON, hold Ctrl while using Circle Select, Auto Circle Select Mode, or Box/Rectangle selection to unselect Plasticity surfaces.
 - General bug fixes and stability improvements.
+![ezgif-5c1c9da9d20ab34a](https://github.com/user-attachments/assets/5fc0e435-84c6-41bc-87f9-230e86a0f388)
