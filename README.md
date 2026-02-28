@@ -117,6 +117,6 @@ Add-on metadata update: Updated bl_info for the fork:
 - Live Expand Selection: added fast Ctrl-subtract behavior (inverse selection action) for Circle Select, Auto Circle Select Mode, and Box/Rectangle selection workflows.
 - General bug fixes and stability improvements.
 
-https://github.com/user-attachments/assets/85bd8805-8610-496b-a918-0315df06d288
+https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
 
 
