@@ -443,7 +443,7 @@ class PlasticityPanel(bpy.types.Panel):
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_live_paint_faces"), emboss=False)
                 if scene.prop_plasticity_pin_live_expand:
                     row = pin_col.row(align=True)
-                    row.prop(scene, "prop_plasticity_live_expand", text="Live Expand Selection")
+                    row.prop(scene, "prop_plasticity_live_expand", text="Live Expand Selection (Ctrl to Unselect)")
                     row.prop(scene, "prop_plasticity_pin_live_expand",
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_live_expand"), emboss=False)
                 if scene.prop_plasticity_pin_live_expand_auto_circle:
@@ -906,7 +906,7 @@ class PlasticityPanel(bpy.types.Panel):
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_select_faces"), emboss=False)
                     row = faces_col.row(align=True)
                     row.prop(scene, "prop_plasticity_live_expand",
-                             text="Live Expand Selection")
+                             text="Live Expand Selection (Ctrl to Unselect)")
                     row.prop(scene, "prop_plasticity_pin_live_expand",
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_live_expand"), emboss=False)
                     if scene.prop_plasticity_live_expand:

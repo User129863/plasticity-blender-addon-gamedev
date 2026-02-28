@@ -783,13 +783,13 @@ def register():
     )
     bpy.types.Scene.prop_plasticity_live_expand = bpy.props.BoolProperty(
         name="Live Expand",
-        description="Automatically expand selected triangles to Plasticity faces",
+        description="Automatically expand selected triangles to Plasticity surfaces. Hold Ctrl while selecting to unselect surfaces",
         default=False,
         update=update_live_expand,
     )
     bpy.types.Scene.prop_plasticity_live_expand_auto_circle = bpy.props.BoolProperty(
         name="Auto Circle Select Mode",
-        description="Switch to Circle Select when Live Expand is enabled",
+        description="Switch to Circle Select when Live Expand is enabled. Hold Ctrl while selecting to unselect surfaces",
         default=True,
         update=update_live_expand_auto_circle,
     )
