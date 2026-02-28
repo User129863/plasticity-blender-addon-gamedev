@@ -73,7 +73,7 @@ Multi-object seam reliability: Merge seams and auto create seam modes (including
 
 Multi-object Relax UVs reliability: Relax now applies correctly across selected faces on multiple selected Edit Mode objects and is more stable after repeated seam + unwrap operations.
 
-New: Pack UV Islands operator: Added under UV / Material / Texture Tools → Unwrap for pack-only workflows (no unwrap). Defaults:
+New: Pack UV Islands operator: Added under UV / Material / Texture Tools -> Unwrap for pack-only workflows (no unwrap). Defaults:
 - Average Islands Scale: ON
 - Rotate Islands: OFF
 
@@ -85,4 +85,27 @@ Add-on metadata update: Updated bl_info for the fork:
 - Updated fork description
 - Minimum Blender: 4.3+
 
+## Version 1.2.2 Updates
 
+- Improved Live Refacet behavior with Live Link workflows.
+- Live Refacet now supports Live Link-aware targeting logic.
+- Live Link updates target updated Plasticity objects.
+- Reduced unnecessary repaint/refacet work in larger Live Link scenes.
+- Live Paint / Paint Plasticity Faces: Added new Live Paint mode controls for Paint Plasticity Faces.
+- Live Paint / Paint Plasticity Faces: Live Paint options for Paint Plasticity Faces.
+- Live Paint / Paint Plasticity Faces: Paint mode (Material + Attribute / Attribute Only).
+- Live Paint / Paint Plasticity Faces: Custom color attribute name.
+- Live Paint / Paint Plasticity Faces: Live Paint toggle to auto-refresh Plasticity face colors.
+- Live Paint / Paint Plasticity Faces: Face color attribute creation now uses BYTE_COLOR.
+- Live Paint / Paint Plasticity Faces: Face painting colors aren't random anymore.
+- Multiple UV workflow stability fixes for Blender 5.x.
+- Fixed UV seam/unwrap/relax interactions causing texel density drift in Blender 5.x workflows.
+- Fixed cases where relaxed UV changes contaminated adjacent non-target surfaces.
+- Blender 5.x behavior handling improved in UV and Live Refacet paths.
+
+## Version 1.2.3 updates
+
+- New (Experimental): Live Expand `Auto Select Cylinders` for faster cylindrical surface selection workflows.
+- New (Experimental): `Cylinder Min Wrap Angle` setting to tune cylinder auto-selection sensitivity.
+- Live Expand Selection: added fast Ctrl-subtract behavior (inverse selection action) for Circle Select, Auto Circle Select Mode, and Box/Rectangle selection workflows.
+- General bug fixes and stability improvements.

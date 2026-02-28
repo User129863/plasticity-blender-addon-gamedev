@@ -34,6 +34,34 @@ class SceneHandler:
         self._last_status_time = 0.0
         self._last_status_text = None
 
+    def __coerce_plasticity_id_set(self, values):
+        ids = set()
+        if values is None:
+            return ids
+        for value in values:
+            try:
+                ids.add(int(value))
+            except Exception:
+                continue
+        return ids
+
+    def __mesh_item_ids(self, items):
+        ids = set()
+        if not items:
+            return ids
+        for item in items:
+            try:
+                object_type = item.get("type")
+                if object_type not in {ObjectType.SOLID.value, ObjectType.SHEET.value}:
+                    continue
+                plasticity_id = item.get("id")
+                if plasticity_id is None:
+                    continue
+                ids.add(int(plasticity_id))
+            except Exception:
+                continue
+        return ids
+
     def __create_mesh(self, name, verts, indices, normals, groups, face_ids):
         mesh = bpy.data.meshes.new(name)
         mesh.vertices.add(len(verts) // 3)
@@ -322,10 +350,12 @@ class SceneHandler:
         bpy.context.window_manager.plasticity_busy = False
         filename = transaction["filename"]
         version = transaction["version"]
+        changed_ids = self.__mesh_item_ids(transaction.get("add", []))
+        changed_ids.update(self.__mesh_item_ids(transaction.get("update", [])))
         # Mark incoming Live Link data so Live Refacet can react to real updates.
         try:
             from . import operators
-            operators.note_live_link_update(filename)
+            operators.note_live_link_update(filename, changed_ids=changed_ids)
         except Exception:
             pass
 
@@ -347,17 +377,24 @@ class SceneHandler:
             self.__replace_objects(filename, inbox_collection,
                                    version, transaction["update"])
 
+        try:
+            from . import operators
+            operators.reset_live_uv_runtime_state(scene=bpy.context.scene, filename=filename)
+            operators.apply_live_paint_faces(
+                scene=bpy.context.scene,
+                filename=filename,
+                force=True,
+                target_ids=changed_ids,
+            )
+        except Exception:
+            pass
+
         bpy.ops.ed.undo_push(message="/Plasticity update")
 
     def on_list(self, message):
         bpy.context.window_manager.plasticity_busy = False
         filename = message["filename"]
         version = message["version"]
-        try:
-            from . import operators
-            operators.note_live_link_update(filename)
-        except Exception:
-            pass
 
         self.report({'INFO'}, "Updating " + filename +
                     " to version " + str(version))
@@ -394,6 +431,14 @@ class SceneHandler:
             filtered_add = add_items
             filtered_update = update_items
 
+        changed_ids = self.__mesh_item_ids(filtered_add)
+        changed_ids.update(self.__mesh_item_ids(filtered_update))
+        try:
+            from . import operators
+            operators.note_live_link_update(filename, changed_ids=changed_ids)
+        except Exception:
+            pass
+
         if filtered_add:
             self.__replace_objects(filename, inbox_collection,
                                    version, filtered_add)
@@ -419,6 +464,18 @@ class SceneHandler:
                     to_delete.append(plasticity_id)
             for plasticity_id in to_delete:
                 self.__delete_group(filename, version, plasticity_id)
+
+        try:
+            from . import operators
+            operators.reset_live_uv_runtime_state(scene=bpy.context.scene, filename=filename)
+            operators.apply_live_paint_faces(
+                scene=bpy.context.scene,
+                filename=filename,
+                force=True,
+                target_ids=changed_ids,
+            )
+        except Exception:
+            pass
 
         bpy.ops.ed.undo_push(message="/Plasticity update")
         self.list_filter_ids = None
@@ -465,6 +522,19 @@ class SceneHandler:
         finally:
             if total:
                 self._update_status_text(None, force=True)
+
+        changed_ids = self.__coerce_plasticity_id_set(plasticity_ids)
+        try:
+            from . import operators
+            operators.reset_live_uv_runtime_state(scene=bpy.context.scene, filename=filename)
+            operators.apply_live_paint_faces(
+                scene=bpy.context.scene,
+                filename=filename,
+                force=True,
+                target_ids=changed_ids,
+            )
+        except Exception:
+            pass
 
         bpy.context.view_layer.objects.active = prev_active_object
         for obj in prev_selected_objects:
