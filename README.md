@@ -2,6 +2,8 @@
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
 </a>
 
+[![Watch on YouTube](https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg)](https://www.youtube.com/watch?v=Bk0S0jZEzRM)
+
 # plasticity-blender-addon-gamedev
 
 GameDev-focused fork of the Plasticity Blender bridge. Builds on upstream and adds workflow tools for fast real-time asset prep (topology/edge control, UV workflow, and export-oriented utilities).
@@ -107,5 +109,5 @@ Add-on metadata update: Updated bl_info for the fork:
 
 - New (Experimental): Live Expand `Auto Select Cylinders` for faster cylindrical surface selection workflows.
 - New (Experimental): `Cylinder Min Wrap Angle` setting to tune cylinder auto-selection sensitivity.
-- Live Expand Selection: when Live Expand mode is ON, hold Ctrl while using Circle Select, Auto Circle Select Mode, or Box/Rectangle selection to unselect Plasticity surfaces.
+- Live Expand Selection: added fast Ctrl-subtract behavior (inverse selection action) for Circle Select, Auto Circle Select Mode, and Box/Rectangle selection workflows.
 - General bug fixes and stability improvements.
