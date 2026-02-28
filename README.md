@@ -6,7 +6,7 @@
   <a href="https://www.youtube.com/watch?v=Bk0S0jZEzRM">
     <img src="https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg" alt="Watch on YouTube">
   </a><br>
-  <sub>Gamepad Model by: Kuechmeister Swagger</sub>
+  Gamepad Model by: Kuechmeister Swagger
 </p>
 
 # plasticity-blender-addon-gamedev
