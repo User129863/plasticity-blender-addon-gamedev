@@ -40,7 +40,7 @@ This fork continues beyond upstream and adds additional GameDev-focused workflow
 - Remove Modifiers: remove all modifiers from selected objects. Destructive.
 - Apply Modifiers: apply all modifiers on selected objects; destructive and may change topology.
 - Remove Vertex Groups: remove all vertex groups from selected mesh objects. Destructive.
-- Merge Non-overlapping Meshes: supports selection-only vs visible objects, with threshold exposed in the redo panel; optimized overlap checks (AABB fast reject + KDTree distance checks, name-based resolution to avoid stale refs); useful for batching and for baking workflows that use bevel-shader techniques, but can increase bake times in Blender.
+- Merge Non-overlapping Meshes: supports selection-only vs visible objects, with threshold exposed in the redo panel; optimized overlap checks (AABB fast reject + KDTree distance checks, name-based resolution to avoid stale refs); useful for batching and for baking workflows that use bevel-shader techniques, decreases bake times in Blender.
 - UV workflow tools: open/close UV editor, select meshes without UVs, remove UVs, and material/texture cleanup grouped together.
 - Import/export utilities: FBX and OBJ import/export with modern operator support and legacy fallback.
 
