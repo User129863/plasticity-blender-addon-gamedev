@@ -1,3 +1,5 @@
+# plasticity-blender-addon-gamedev
+
 <a href="https://buymeacoffee.com/User129863">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="200">
 </a>
@@ -8,8 +10,6 @@
   </a><br>
   Gamepad Model by: <a href="https://www.youtube.com/@Kuechmeister">Kuechmeister Swagger</a>
 </p>
-
-# plasticity-blender-addon-gamedev
 
 GameDev-focused fork of the Plasticity Blender bridge. Builds on upstream and adds workflow tools for fast real-time asset prep (topology/edge control, UV workflow, and export-oriented utilities).
 
