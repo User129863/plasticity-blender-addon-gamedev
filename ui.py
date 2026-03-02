@@ -1190,11 +1190,22 @@ class PlasticityPanel(bpy.types.Panel):
                 box = layout.box()
                 col = box.column(align=True)
 
-                category_box = col.box()
-                category_col = category_box.column(align=True)
-                category_col.label(text="UV / Material / Texture Tools")
-                category_col.prop(
+                uv_box = col.box()
+                uv_col = uv_box.column(align=True)
+                uv_col.label(text="UV / Material / Texture Tools")
+                uv_col.prop(
                     scene,
                     "prop_plasticity_pref_auto_assign_checker_on_select",
                     text="Auto Assign Checker on Selection",
+                )
+
+                col.separator()
+
+                mesh_box = col.box()
+                mesh_col = mesh_box.column(align=True)
+                mesh_col.label(text="Mesh Tools")
+                mesh_col.prop(
+                    scene,
+                    "prop_plasticity_pref_fbx_export_backend",
+                    text="FBX import / Export",
                 )

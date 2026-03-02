@@ -4393,6 +4393,39 @@ def stop_live_expand_timer():
     _LIVE_EXPAND_LAST_SELECTION_TIME = 0.0
 
 
+def _runtime_edit_mesh_objects(context, require_plasticity=False):
+    if context is None:
+        return []
+
+    edit_objects = getattr(context, "objects_in_mode", None)
+    if not edit_objects:
+        selected_objects = getattr(context, "selected_objects", None) or []
+        edit_objects = [
+            obj for obj in selected_objects
+            if obj and obj.type == 'MESH' and getattr(obj, "mode", None) == 'EDIT'
+        ]
+        if not edit_objects:
+            active = getattr(context, "active_object", None)
+            edit_objects = [active] if active else []
+
+    resolved = []
+    seen_names = set()
+    for obj in edit_objects:
+        if obj is None or obj.type != 'MESH':
+            continue
+        if getattr(obj, "mode", None) != 'EDIT':
+            continue
+        if require_plasticity and "plasticity_id" not in obj.keys():
+            continue
+        if obj.name in seen_names:
+            continue
+        seen_names.add(obj.name)
+        resolved.append(obj)
+
+    resolved.sort(key=lambda item: item.name)
+    return resolved
+
+
 def _get_viewport_key(context):
     if context is None:
         return None
@@ -4564,13 +4597,10 @@ def _draw_live_expand_overlay():
         return
     if not _is_live_expand_active_view(bpy.context, scene):
         return
-    edit_objects = getattr(bpy.context, "objects_in_mode", None)
-    if not edit_objects:
-        edit_objects = [bpy.context.active_object] if bpy.context.active_object else []
-    edit_objects = [
-        obj for obj in edit_objects
-        if obj and obj.type == 'MESH' and "plasticity_id" in obj.keys()
-    ]
+    edit_objects = _runtime_edit_mesh_objects(
+        bpy.context,
+        require_plasticity=True,
+    )
     if not edit_objects:
         return
 
@@ -7140,10 +7170,11 @@ def _touch_live_unwrap_after_seam_change(
     edge_live = bool(getattr(tool_settings, "use_edge_path_live_unwrap", False)) if tool_settings else False
     live_enabled = edge_live or _is_uv_editor_live_unwrap_enabled(context)
     seam_mode = str(getattr(scene, "prop_plasticity_auto_seam_mode", "OFF")) if scene else "OFF"
-    edit_objects = getattr(context, "objects_in_mode", None)
-    if not edit_objects:
-        edit_objects = [context.active_object] if context.active_object else []
-    multi_edit_mesh = sum(1 for o in edit_objects if o and o.type == 'MESH') > 1
+    edit_objects = _runtime_edit_mesh_objects(
+        context,
+        require_plasticity=False,
+    )
+    multi_edit_mesh = len(edit_objects) > 1
 
     changed_faces = _seam_changed_face_indices(bm, seam_true_indices, seam_false_indices)
     changed_edge_indices = set(seam_true_indices) | set(seam_false_indices)
@@ -7419,13 +7450,10 @@ def _live_expand_timer():
         _LIVE_EXPAND_LAST_SELECTION_TIME = 0.0
         return interval
 
-    edit_objects = getattr(context, "objects_in_mode", None)
-    if not edit_objects:
-        edit_objects = [context.active_object] if context.active_object else []
-    edit_objects = [
-        obj for obj in edit_objects
-        if obj and obj.type == 'MESH' and "plasticity_id" in obj.keys()
-    ]
+    edit_objects = _runtime_edit_mesh_objects(
+        context,
+        require_plasticity=True,
+    )
     if not edit_objects:
         _LIVE_EXPAND_BASE_SELECTION = {}
         _LIVE_EXPAND_EXPANDED_SELECTION = {}
@@ -7543,7 +7571,7 @@ def _live_expand_timer():
                     _touch_seams_version(mesh)
                     bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
                     if multi_edit_mesh:
-                        if prev_active != obj:
+                        if context.view_layer.objects.active != obj:
                             context.view_layer.objects.active = obj
                         _touch_live_unwrap_after_seam_change(
                             context,
@@ -7553,7 +7581,7 @@ def _live_expand_timer():
                         )
                         needs_deferred_unwrap = True
                     else:
-                        if prev_active != obj:
+                        if context.view_layer.objects.active != obj:
                             context.view_layer.objects.active = obj
                         did_unwrap = _touch_live_unwrap_after_seam_change(
                             context,
@@ -7729,7 +7757,7 @@ def _live_expand_timer():
                 _touch_seams_version(mesh)
                 bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
                 if multi_edit_mesh:
-                    if prev_active != obj:
+                    if context.view_layer.objects.active != obj:
                         context.view_layer.objects.active = obj
                     _touch_live_unwrap_after_seam_change(
                         context,
@@ -7739,7 +7767,7 @@ def _live_expand_timer():
                     )
                     needs_deferred_unwrap = True
                 else:
-                    if prev_active != obj:
+                    if context.view_layer.objects.active != obj:
                         context.view_layer.objects.active = obj
                     did_unwrap = _touch_live_unwrap_after_seam_change(
                         context,
@@ -7898,7 +7926,7 @@ def _live_expand_timer():
         if changed_to_true or changed_to_false:
             _touch_seams_version(mesh)
             if multi_edit_mesh:
-                if prev_active != obj:
+                if context.view_layer.objects.active != obj:
                     context.view_layer.objects.active = obj
                 _touch_live_unwrap_after_seam_change(
                     context,
@@ -7908,7 +7936,7 @@ def _live_expand_timer():
                 )
                 needs_deferred_unwrap = True
             else:
-                if prev_active != obj:
+                if context.view_layer.objects.active != obj:
                     context.view_layer.objects.active = obj
                 did_unwrap = _touch_live_unwrap_after_seam_change(
                     context,
@@ -9470,12 +9498,240 @@ class ImportFBXOperator(bpy.types.Operator):
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")
 
     def execute(self, context):
-        bpy.ops.import_scene.fbx(filepath=self.filepath)
+        scene = getattr(context, "scene", None)
+        backend = str(getattr(scene, "prop_plasticity_pref_fbx_export_backend", "BLENDER"))
+
+        if backend == "BETTER_FBX":
+            better_operator_id, better_operator = _resolve_better_fbx_import_operator()
+            if better_operator is not None:
+                success, error_message = _invoke_fbx_import_operator(
+                    better_operator_id,
+                    better_operator,
+                    self.filepath,
+                )
+                if success:
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{error_message} Falling back to Blender FBX.")
+            else:
+                self.report(
+                    {'WARNING'},
+                    "Better FBX importer not found. Falling back to Blender FBX.",
+                )
+
+        success, error_message = _invoke_fbx_import_operator(
+            "import_scene.fbx",
+            bpy.ops.import_scene.fbx,
+            self.filepath,
+        )
+        if not success:
+            self.report({'ERROR'}, error_message)
+            return {'CANCELLED'}
         return {'FINISHED'}
 
     def invoke(self, context, event):
+        scene = getattr(context, "scene", None)
+        backend = str(getattr(scene, "prop_plasticity_pref_fbx_export_backend", "BLENDER"))
+        if backend == "BETTER_FBX":
+            better_operator_id, better_operator = _resolve_better_fbx_import_operator()
+            if better_operator is not None:
+                success, result, error_message = _invoke_fbx_import_dialog(
+                    better_operator_id,
+                    better_operator,
+                )
+                if success:
+                    return result
+                self.report({'WARNING'}, f"{error_message} Falling back to Blender FBX.")
+            else:
+                self.report(
+                    {'WARNING'},
+                    "Better FBX importer not found. Falling back to Blender FBX.",
+                )
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
+
+
+def _resolve_operator_callable(operator_id):
+    try:
+        namespace, operator_name = operator_id.split(".", 1)
+    except ValueError:
+        return None
+
+    operator_namespace = getattr(bpy.ops, namespace, None)
+    if operator_namespace is None:
+        return None
+    operator_callable = getattr(operator_namespace, operator_name, None)
+    if operator_callable is None:
+        return None
+
+    try:
+        operator_callable.get_rna_type()
+    except Exception:
+        return None
+    return operator_callable
+
+
+def _resolve_better_fbx_import_operator():
+    candidate_ids = (
+        "better_import.fbx",
+        "import_scene.better_fbx",
+    )
+    checked_ids = set()
+
+    for operator_id in candidate_ids:
+        checked_ids.add(operator_id)
+        operator_callable = _resolve_operator_callable(operator_id)
+        if operator_callable is not None:
+            return operator_id, operator_callable
+
+    for namespace in dir(bpy.ops):
+        if namespace.startswith("_"):
+            continue
+        operator_namespace = getattr(bpy.ops, namespace, None)
+        if operator_namespace is None:
+            continue
+        try:
+            operator_names = dir(operator_namespace)
+        except Exception:
+            continue
+        for operator_name in operator_names:
+            if operator_name.startswith("_"):
+                continue
+            operator_id = f"{namespace}.{operator_name}"
+            if operator_id in checked_ids:
+                continue
+            operator_id_lower = operator_id.lower()
+            if "better" not in operator_id_lower or "fbx" not in operator_id_lower:
+                continue
+            if "import" not in operator_id_lower:
+                continue
+            checked_ids.add(operator_id)
+            operator_callable = _resolve_operator_callable(operator_id)
+            if operator_callable is not None:
+                return operator_id, operator_callable
+
+    return None, None
+
+
+def _invoke_fbx_import_operator(operator_id, operator_callable, filepath):
+    if operator_callable is None:
+        return False, f"FBX importer '{operator_id}' is unavailable."
+
+    kwargs = {"filepath": filepath}
+
+    try:
+        result = operator_callable(**kwargs)
+    except Exception as exc:
+        return False, f"FBX import via '{operator_id}' failed: {exc}"
+
+    if result is None or 'CANCELLED' in result:
+        return False, f"FBX import via '{operator_id}' was cancelled."
+    return True, None
+
+
+def _invoke_fbx_import_dialog(operator_id, operator_callable):
+    if operator_callable is None:
+        return False, None, f"FBX importer '{operator_id}' is unavailable."
+
+    try:
+        result = operator_callable('INVOKE_DEFAULT')
+    except Exception as exc:
+        return False, None, f"FBX import dialog via '{operator_id}' failed: {exc}"
+
+    if result is None or 'CANCELLED' in result:
+        return False, None, f"FBX import dialog via '{operator_id}' was cancelled."
+    return True, result, None
+
+
+def _resolve_better_fbx_export_operator():
+    candidate_ids = (
+        "better_export.fbx",
+        "export_scene.better_fbx",
+    )
+    checked_ids = set()
+
+    for operator_id in candidate_ids:
+        checked_ids.add(operator_id)
+        operator_callable = _resolve_operator_callable(operator_id)
+        if operator_callable is not None:
+            return operator_id, operator_callable
+
+    for namespace in dir(bpy.ops):
+        if namespace.startswith("_"):
+            continue
+        operator_namespace = getattr(bpy.ops, namespace, None)
+        if operator_namespace is None:
+            continue
+        try:
+            operator_names = dir(operator_namespace)
+        except Exception:
+            continue
+        for operator_name in operator_names:
+            if operator_name.startswith("_"):
+                continue
+            operator_id = f"{namespace}.{operator_name}"
+            if operator_id in checked_ids:
+                continue
+            operator_id_lower = operator_id.lower()
+            if "better" not in operator_id_lower or "fbx" not in operator_id_lower:
+                continue
+            checked_ids.add(operator_id)
+            operator_callable = _resolve_operator_callable(operator_id)
+            if operator_callable is not None:
+                return operator_id, operator_callable
+
+    return None, None
+
+
+def _invoke_fbx_export_operator(operator_id, operator_callable, filepath):
+    if operator_callable is None:
+        return False, f"FBX exporter '{operator_id}' is unavailable."
+
+    try:
+        rna_properties = operator_callable.get_rna_type().properties
+        property_names = {prop.identifier for prop in rna_properties}
+    except Exception:
+        property_names = set()
+
+    kwargs = {"filepath": filepath}
+    if "use_selection" in property_names:
+        kwargs["use_selection"] = True
+    elif "export_selected_objects" in property_names:
+        kwargs["export_selected_objects"] = True
+
+    try:
+        result = operator_callable(**kwargs)
+    except Exception as exc:
+        return False, f"FBX export via '{operator_id}' failed: {exc}"
+
+    if result is None or 'CANCELLED' in result:
+        return False, f"FBX export via '{operator_id}' was cancelled."
+    return True, None
+
+
+def _invoke_fbx_export_dialog(operator_id, operator_callable):
+    if operator_callable is None:
+        return False, None, f"FBX exporter '{operator_id}' is unavailable."
+
+    try:
+        rna_properties = operator_callable.get_rna_type().properties
+        property_names = {prop.identifier for prop in rna_properties}
+    except Exception:
+        property_names = set()
+
+    kwargs = {}
+    if "use_selection" in property_names:
+        kwargs["use_selection"] = True
+    elif "export_selected_objects" in property_names:
+        kwargs["export_selected_objects"] = True
+
+    try:
+        result = operator_callable('INVOKE_DEFAULT', **kwargs)
+    except Exception as exc:
+        return False, None, f"FBX export dialog via '{operator_id}' failed: {exc}"
+
+    if result is None or 'CANCELLED' in result:
+        return False, None, f"FBX export dialog via '{operator_id}' was cancelled."
+    return True, result, None
 
 
 class ExportFBXOperator(bpy.types.Operator):
@@ -9487,10 +9743,54 @@ class ExportFBXOperator(bpy.types.Operator):
     filepath: bpy.props.StringProperty(subtype="FILE_PATH")
 
     def execute(self, context):
-        bpy.ops.export_scene.fbx(filepath=self.filepath, use_selection=True)
+        scene = getattr(context, "scene", None)
+        backend = str(getattr(scene, "prop_plasticity_pref_fbx_export_backend", "BLENDER"))
+
+        if backend == "BETTER_FBX":
+            better_operator_id, better_operator = _resolve_better_fbx_export_operator()
+            if better_operator is not None:
+                success, error_message = _invoke_fbx_export_operator(
+                    better_operator_id,
+                    better_operator,
+                    self.filepath,
+                )
+                if success:
+                    return {'FINISHED'}
+                self.report({'WARNING'}, f"{error_message} Falling back to Blender FBX.")
+            else:
+                self.report(
+                    {'WARNING'},
+                    "Better FBX exporter not found. Falling back to Blender FBX.",
+                )
+
+        success, error_message = _invoke_fbx_export_operator(
+            "export_scene.fbx",
+            bpy.ops.export_scene.fbx,
+            self.filepath,
+        )
+        if not success:
+            self.report({'ERROR'}, error_message)
+            return {'CANCELLED'}
         return {'FINISHED'}
 
     def invoke(self, context, event):
+        scene = getattr(context, "scene", None)
+        backend = str(getattr(scene, "prop_plasticity_pref_fbx_export_backend", "BLENDER"))
+        if backend == "BETTER_FBX":
+            better_operator_id, better_operator = _resolve_better_fbx_export_operator()
+            if better_operator is not None:
+                success, result, error_message = _invoke_fbx_export_dialog(
+                    better_operator_id,
+                    better_operator,
+                )
+                if success:
+                    return result
+                self.report({'WARNING'}, f"{error_message} Falling back to Blender FBX.")
+            else:
+                self.report(
+                    {'WARNING'},
+                    "Better FBX exporter not found. Falling back to Blender FBX.",
+                )
         context.window_manager.fileselect_add(self)
         return {'RUNNING_MODAL'}
 

@@ -1086,6 +1086,18 @@ def register():
         description="Automatically assign the selected checker texture to selected mesh objects/faces",
         default=False,
     )
+    bpy.types.Scene.prop_plasticity_pref_fbx_export_backend = bpy.props.EnumProperty(
+        name="FBX import / Export",
+        description=(
+            "Choose which FBX importer/exporter to use. "
+            "Better FBX is used when available; otherwise Blender FBX is used"
+        ),
+        items=[
+            ("BLENDER", "Blender FBX", "Use Blender's built-in FBX import/export tools"),
+            ("BETTER_FBX", "Better FBX", "Use Better FBX import/export tools when available"),
+        ],
+        default="BLENDER",
+    )
     bpy.types.Scene.prop_plasticity_checker_custom_path = bpy.props.StringProperty(
         name="Checker Image",
         subtype="FILE_PATH",
@@ -1384,6 +1396,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_checker_source
     del bpy.types.Scene.prop_plasticity_checker_image
     del bpy.types.Scene.prop_plasticity_pref_auto_assign_checker_on_select
+    del bpy.types.Scene.prop_plasticity_pref_fbx_export_backend
     del bpy.types.Scene.prop_plasticity_checker_custom_path
     del bpy.types.Scene.prop_plasticity_facet_min_width
     del bpy.types.Scene.prop_plasticity_facet_max_width
