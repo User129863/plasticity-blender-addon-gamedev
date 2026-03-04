@@ -13,10 +13,10 @@
 </p>
 
 
-##GameDev-focused fork of the Plasticity Blender Bridge.
+## GameDev-focused fork of the Plasticity Blender Bridge.
 Community fork (unofficial) that tracks upstream closely and adds workflow tools for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
 
-##Upstreamed into the official add-on workflow
+## Upstreamed into the official add-on workflow
 
 The following features were first developed in this fork and have since been upstreamed, so they’re now part of the official Plasticity Blender add-on:
 - AutoMarkEdgesOperator: consolidates “Mark Sharp” and “Mark Sharp at boundaries” into a single operator, with modes for marking Hard Edges (Sharp) or UV Seams (Seam).
