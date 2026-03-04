@@ -13,19 +13,19 @@
 </p>
 
 
-GameDev-focused fork of the Plasticity Blender bridge. Builds on upstream and adds workflow tools for fast real-time asset prep (topology/edge control, UV workflow, and export-oriented utilities).
+##GameDev-focused fork of the Plasticity Blender Bridge.
+Community fork (unofficial) that tracks upstream closely and adds workflow tools for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
 
-## Upstreamed into the official add-on workflow
+##Upstreamed into the official add-on workflow
 
-These features were developed in this fork first and were later upstreamed, so they are part of the official Plasticity Blender add-on workflow:
-
-- AutoMarkEdgesOperator: consolidates "Mark Sharp" and "Mark Sharp at boundaries" into a single operator with modes to mark selection as Hard Edges (Sharp) or UV Seams (Seam).
-- Smart edge marking (Sharp/Seam): operates on entire-mesh selections (not individually selected polygons inside a Plasticity group) and applies edge marking using the same boundary logic as MarkSharpEdgesForPlasticityGroupsWithSplitNormalsOperator.
-- Arbitrary group-polygon boundary marking (Sharp/Seam): allows selecting polygons belonging to Plasticity surface groups and marking their selection boundary (instead of only marking boundaries of individual Plasticity surfaces).
-- UV seam merge from arbitrary group selections: merges existing UV seams based on an arbitrary polygon selection within Plasticity groups.
+The following features were first developed in this fork and have since been upstreamed, so they’re now part of the official Plasticity Blender add-on:
+- AutoMarkEdgesOperator: consolidates “Mark Sharp” and “Mark Sharp at boundaries” into a single operator, with modes for marking Hard Edges (Sharp) or UV Seams (Seam).
+- Smart edge marking (Sharp/Seam): operates on whole-mesh selections (rather than per-polygon selection inside a Plasticity group) and applies the same boundary logic as MarkSharpEdgesForPlasticityGroupsWithSplitNormalsOperator.
+- Arbitrary group-boundary marking (Sharp/Seam): allows selecting polygons within Plasticity surface groups and marking the selection boundary (not only per-surface boundaries).
+- UV seam merge from arbitrary group selections: merges existing UV seams based on an arbitrary polygon selection inside Plasticity groups.
 - Plasticity group edge selection: utilities to select edges corresponding to Plasticity group boundaries.
 
-This fork continues beyond upstream and adds additional GameDev-focused workflow changes, targeting real-time asset preparation (game-ready topology/edge control, UV workflow, and export-oriented tooling).
+This fork continues beyond what has been upstreamed, adding additional game-dev workflow improvements aimed at real-time asset preparation (game-ready topology/edge control, UV workflow, and export tooling).
 
 ## Version 1.0 features
 
