@@ -18,7 +18,7 @@ Community fork (unofficial) that tracks upstream closely and adds workflow tools
 
 ## Upstreamed into the official add-on workflow
 
-The following features were first developed in this fork and have since been upstreamed, so they’re now part of the official Plasticity Blender add-on:
+The following features were first developed in this fork and have since been upstreamed, so they’re part of the official Plasticity Blender add-on:
 - AutoMarkEdgesOperator: consolidates “Mark Sharp” and “Mark Sharp at boundaries” into a single operator, with modes for marking Hard Edges (Sharp) or UV Seams (Seam).
 - Smart edge marking (Sharp/Seam): operates on whole-mesh selections (rather than per-polygon selection inside a Plasticity group) and applies the same boundary logic as MarkSharpEdgesForPlasticityGroupsWithSplitNormalsOperator.
 - Arbitrary group-boundary marking (Sharp/Seam): allows selecting polygons within Plasticity surface groups and marking the selection boundary (not only per-surface boundaries).
