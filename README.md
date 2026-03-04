@@ -14,7 +14,7 @@
 
 
 ## GameDev-focused fork of the Plasticity Blender Bridge.
-Community fork (unofficial) that regularly incorporates the latest improvements from the official Plasticity Blender add-on, and adds workflow tools for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
+Unofficial fork that regularly incorporates the latest improvements from the official Plasticity Blender add-on, and adds workflow tools for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
 
 ## Upstreamed into the official add-on workflow
 
