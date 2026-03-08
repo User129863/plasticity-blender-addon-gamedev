@@ -132,5 +132,4 @@ https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
 - General bug fixes and stability improvements.
 
 https://github.com/user-attachments/assets/2df026d0-9198-4e3b-8dd9-8b82ee5f9f59
-https://github.com/user-attachments/assets/1a82a74e-6c7b-43f2-b34f-e15be29ccfc3
 
