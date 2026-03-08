@@ -131,5 +131,5 @@ https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
 - Blender can now preserve locally edited pivot, object position, and object rotation through refacet/refresh when the control is set to Blender, making it easier to do assembly work directly in Blender.
 - General bug fixes and stability improvements.
 
-https://github.com/user-attachments/assets/2df026d0-9198-4e3b-8dd9-8b82ee5f9f59
+https://github.com/user-attachments/assets/bed96ba8-e440-4f40-ba1c-5b3c95cbf68b
 
