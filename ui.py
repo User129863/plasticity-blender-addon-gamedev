@@ -228,10 +228,10 @@ class RefacetButton(bpy.types.Operator):
 
 class PlasticityPanel(bpy.types.Panel):
     bl_idname = "OBJECT_PT_plasticity_panel"
-    bl_label = "Plasticity"
+    bl_label = "Plasticity GameDev"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
-    bl_category = 'Plasticity'
+    bl_category = 'Plasticity GameDev'
 
     def draw(self, context):
         layout = self.layout
@@ -328,6 +328,7 @@ class PlasticityPanel(bpy.types.Panel):
                 "prop_plasticity_pin_uv_assign_checker",
                 "prop_plasticity_pin_uv_remove_checker",
                 "prop_plasticity_pin_mesh_select_similar",
+                "prop_plasticity_pin_mesh_object_transform_control_mode",
                 "prop_plasticity_pin_mesh_join",
                 "prop_plasticity_pin_mesh_unjoin",
                 "prop_plasticity_pin_mesh_merge_nonoverlapping",
@@ -608,6 +609,13 @@ class PlasticityPanel(bpy.types.Panel):
                     row.operator("object.select_similar_geometry", text="Select Similar Geometry")
                     row.prop(scene, "prop_plasticity_pin_mesh_select_similar",
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_mesh_select_similar"), emboss=False)
+                if scene.prop_plasticity_pin_mesh_object_transform_control_mode:
+                    row = pin_col.row(align=True)
+                    transform_col = row.column(align=True)
+                    transform_col.label(text="Plasticity Object Transform Control")
+                    transform_col.prop(scene, "prop_plasticity_object_transform_control_mode", text="")
+                    row.prop(scene, "prop_plasticity_pin_mesh_object_transform_control_mode",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_mesh_object_transform_control_mode"), emboss=False)
                 if scene.prop_plasticity_pin_mesh_join:
                     row = pin_col.row(align=True)
                     row.operator("object.join_selected", text="Join Selected")
@@ -1119,6 +1127,20 @@ class PlasticityPanel(bpy.types.Panel):
                 row.operator("object.select_similar_geometry", text="Select Similar Geometry")
                 row.prop(scene, "prop_plasticity_pin_mesh_select_similar",
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_mesh_select_similar"), emboss=False)
+                transform_outer = box.column()
+                spacer = transform_outer.row()
+                spacer.scale_y = 0.25
+                spacer.label(text="")
+                transform_box = transform_outer.box()
+                transform_col = transform_box.column(align=True)
+                transform_col.label(text="Plasticity Object Transform Control")
+                row = transform_col.row(align=True)
+                row.prop(scene, "prop_plasticity_object_transform_control_mode", text="")
+                row.prop(scene, "prop_plasticity_pin_mesh_object_transform_control_mode",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_mesh_object_transform_control_mode"), emboss=False)
+                spacer = transform_outer.row()
+                spacer.scale_y = 0.25
+                spacer.label(text="")
                 row = col.row(align=True)
                 row.operator("object.join_selected", text="Join Selected")
                 row.prop(scene, "prop_plasticity_pin_mesh_join",

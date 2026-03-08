@@ -9,6 +9,154 @@ import mathutils
 import numpy as np
 
 
+_PIVOT_IMPORT_BASIS_KEY = "plasticity_blender_import_basis_matrix"
+_PIVOT_PIVOT_BASIS_KEY = "plasticity_blender_pivot_basis_matrix"
+_PIVOT_TRANSFORM_BASIS_KEY = "plasticity_blender_transform_basis_matrix"
+_PIVOT_COMPENSATION_KEY = "plasticity_blender_pivot_compensation_matrix"
+_PIVOT_MATRIX_EPS = 1.0e-6
+_PIVOT_CORNER_EPS = 1.0e-4
+_PIVOT_MODE_PLASTICITY = "PLASTICITY"
+_PIVOT_MODE_BLENDER = "BLENDER"
+
+
+def _is_plasticity_mesh_object(obj):
+    try:
+        return obj is not None and obj.type == 'MESH' and "plasticity_id" in obj.keys()
+    except Exception:
+        return False
+
+
+def _matrix_to_list(matrix):
+    return [float(value) for row in matrix for value in row]
+
+
+def _matrix_from_list(values):
+    if values is None:
+        return None
+    try:
+        flat = [float(value) for value in values]
+    except Exception:
+        return None
+    if len(flat) != 16:
+        return None
+    return mathutils.Matrix((
+        flat[0:4],
+        flat[4:8],
+        flat[8:12],
+        flat[12:16],
+    ))
+
+
+def _get_matrix_property(obj, key):
+    try:
+        return _matrix_from_list(obj.get(key))
+    except Exception:
+        return None
+
+
+def _set_matrix_property(obj, key, matrix, eps=_PIVOT_MATRIX_EPS):
+    current = _get_matrix_property(obj, key)
+    if current is not None and _matrices_close(current, matrix, eps=eps):
+        return False
+    obj[key] = _matrix_to_list(matrix)
+    return True
+
+
+def _matrices_close(left, right, eps=_PIVOT_MATRIX_EPS):
+    if left is None or right is None:
+        return False
+    for row_index in range(4):
+        for col_index in range(4):
+            if abs(float(left[row_index][col_index]) - float(right[row_index][col_index])) > eps:
+                return False
+    return True
+
+
+def _points_close(left, right, eps=_PIVOT_CORNER_EPS):
+    if left is None or right is None:
+        return False
+    if len(left) != len(right):
+        return False
+    for left_point, right_point in zip(left, right):
+        if len(left_point) != len(right_point):
+            return False
+        for left_value, right_value in zip(left_point, right_point):
+            if abs(float(left_value) - float(right_value)) > eps:
+                return False
+    return True
+
+
+def _scale_only_basis(obj):
+    basis = mathutils.Matrix.Identity(4)
+    scale = getattr(obj, "scale", (1.0, 1.0, 1.0))
+    basis[0][0] = float(scale[0])
+    basis[1][1] = float(scale[1])
+    basis[2][2] = float(scale[2])
+    return basis
+
+
+def _transform_vertices(verts, matrix):
+    verts_array = np.asarray(verts, dtype=np.float32)
+    if verts_array.size == 0:
+        return verts_array
+    verts_array = verts_array.reshape(-1, 3)
+    rotation = np.asarray(matrix.to_3x3(), dtype=np.float32)
+    translation = np.asarray(matrix.to_translation(), dtype=np.float32)
+    transformed = verts_array @ rotation.T
+    transformed += translation
+    return transformed.reshape(-1)
+
+
+def _transform_normals(normals, matrix):
+    if normals is None:
+        return None
+    normals_array = np.asarray(normals, dtype=np.float32)
+    if normals_array.size == 0:
+        return normals_array
+    normals_array = normals_array.reshape(-1, 3)
+    rotation = np.asarray(matrix.to_quaternion().to_matrix(), dtype=np.float32)
+    rotated = normals_array @ rotation.T
+    lengths = np.linalg.norm(rotated, axis=1)
+    valid = lengths > 1.0e-8
+    if np.any(valid):
+        rotated[valid] /= lengths[valid][:, None]
+    return rotated.reshape(-1)
+
+
+def _bbox_center_from_flat_verts(verts):
+    verts_array = np.asarray(verts, dtype=np.float32)
+    if verts_array.size == 0:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+    verts_array = verts_array.reshape(-1, 3)
+    min_corner = verts_array.min(axis=0)
+    max_corner = verts_array.max(axis=0)
+    return mathutils.Vector((
+        float((min_corner[0] + max_corner[0]) * 0.5),
+        float((min_corner[1] + max_corner[1]) * 0.5),
+        float((min_corner[2] + max_corner[2]) * 0.5),
+    ))
+
+
+def _bbox_center_from_object(obj):
+    try:
+        corners = tuple(obj.bound_box)
+    except Exception:
+        corners = ()
+    if not corners:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+    total = mathutils.Vector((0.0, 0.0, 0.0))
+    count = 0
+    for corner in corners:
+        try:
+            total += mathutils.Vector((float(corner[0]), float(corner[1]), float(corner[2])))
+            count += 1
+        except Exception:
+            continue
+    if count == 0:
+        return mathutils.Vector((0.0, 0.0, 0.0))
+    return total / count
+
+
 class PlasticityIdUniquenessScope(Enum):
     ITEM = 0
     GROUP = 1
@@ -33,6 +181,12 @@ class SceneHandler:
         self._status_min_interval = 1.0
         self._last_status_time = 0.0
         self._last_status_text = None
+        self._pivot_objects = {}
+        self._pivot_mesh_users = defaultdict(set)
+        self._pivot_object_mesh = {}
+        self._pivot_last_snapshot = {}
+        self._pivot_pending_snapshot = {}
+        self._pivot_suppressed = set()
 
     def __coerce_plasticity_id_set(self, values):
         ids = set()
@@ -62,6 +216,386 @@ class SceneHandler:
                 continue
         return ids
 
+    def __pivot_clear_runtime(self):
+        self._pivot_objects = {}
+        self._pivot_mesh_users = defaultdict(set)
+        self._pivot_object_mesh = {}
+        self._pivot_last_snapshot = {}
+        self._pivot_pending_snapshot = {}
+        self._pivot_suppressed = set()
+
+    def __pivot_suppress_object(self, obj):
+        if not _is_plasticity_mesh_object(obj):
+            return
+        try:
+            self._pivot_suppressed.add(obj.as_pointer())
+        except Exception:
+            pass
+
+    def __pivot_untrack_object(self, obj_or_ptr):
+        try:
+            obj_ptr = int(obj_or_ptr)
+        except Exception:
+            try:
+                obj_ptr = obj_or_ptr.as_pointer()
+            except Exception:
+                return
+        self._pivot_objects.pop(obj_ptr, None)
+        self._pivot_last_snapshot.pop(obj_ptr, None)
+        self._pivot_pending_snapshot.pop(obj_ptr, None)
+        self._pivot_suppressed.discard(obj_ptr)
+        mesh_ptr = self._pivot_object_mesh.pop(obj_ptr, None)
+        if mesh_ptr is None:
+            return
+        users = self._pivot_mesh_users.get(mesh_ptr)
+        if not users:
+            return
+        users.discard(obj_ptr)
+        if not users:
+            self._pivot_mesh_users.pop(mesh_ptr, None)
+
+    def __pivot_snapshot(self, obj):
+        basis = obj.matrix_basis.copy()
+        local_corners = []
+        world_corners = []
+        matrix_world = obj.matrix_world.copy()
+        try:
+            bound_box = tuple(obj.bound_box)
+        except Exception:
+            bound_box = ()
+        for corner in bound_box:
+            try:
+                local = mathutils.Vector((float(corner[0]), float(corner[1]), float(corner[2])))
+            except Exception:
+                continue
+            world = matrix_world @ local
+            local_corners.append((float(local.x), float(local.y), float(local.z)))
+            world_corners.append((float(world.x), float(world.y), float(world.z)))
+        return {
+            "basis": basis,
+            "local_corners": tuple(local_corners),
+            "world_corners": tuple(world_corners),
+        }
+
+    def __pivot_track_object(self, obj, snapshot=None):
+        if not _is_plasticity_mesh_object(obj):
+            self.__pivot_untrack_object(obj)
+            return
+        obj_ptr = obj.as_pointer()
+        self._pivot_objects[obj_ptr] = obj
+        if snapshot is None:
+            snapshot = self.__pivot_snapshot(obj)
+        self._pivot_last_snapshot[obj_ptr] = snapshot
+        previous_mesh_ptr = self._pivot_object_mesh.get(obj_ptr)
+        mesh = getattr(obj, "data", None)
+        mesh_ptr = mesh.as_pointer() if mesh is not None else None
+        if previous_mesh_ptr and previous_mesh_ptr != mesh_ptr:
+            users = self._pivot_mesh_users.get(previous_mesh_ptr)
+            if users:
+                users.discard(obj_ptr)
+                if not users:
+                    self._pivot_mesh_users.pop(previous_mesh_ptr, None)
+        if mesh_ptr is None:
+            self._pivot_object_mesh.pop(obj_ptr, None)
+            return
+        self._pivot_object_mesh[obj_ptr] = mesh_ptr
+        self._pivot_mesh_users[mesh_ptr].add(obj_ptr)
+
+    def __pivot_apply_snapshot_delta(self, obj, previous_snapshot, current_snapshot=None, scene=None):
+        import_basis, _, _, current_compensation = self.__pivot_ensure_state(obj)
+        if import_basis is None or previous_snapshot is None:
+            return False
+        if current_snapshot is None:
+            current_snapshot = self.__pivot_snapshot(obj)
+        previous_basis = previous_snapshot.get("basis")
+        current_basis_snapshot = current_snapshot.get("basis")
+        if previous_basis is None or current_basis_snapshot is None:
+            return False
+        basis_changed = not _matrices_close(previous_basis, current_basis_snapshot)
+        if not basis_changed:
+            return False
+        local_changed = not _points_close(
+            previous_snapshot.get("local_corners"),
+            current_snapshot.get("local_corners"),
+        )
+        world_same = _points_close(
+            previous_snapshot.get("world_corners"),
+            current_snapshot.get("world_corners"),
+        )
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        current_basis = self.__pivot_current_basis(obj)
+        previous_world_basis = previous_basis @ current_compensation
+        if local_changed and world_same:
+            updated_compensation = current_basis.inverted_safe() @ previous_world_basis
+            _set_matrix_property(obj, _PIVOT_COMPENSATION_KEY, updated_compensation)
+            if pivot_mode == _PIVOT_MODE_BLENDER:
+                _set_matrix_property(obj, _PIVOT_PIVOT_BASIS_KEY, current_basis)
+            return True
+        if not local_changed and not world_same:
+            if transform_mode == _PIVOT_MODE_BLENDER:
+                updated_transform_basis = current_basis @ current_compensation
+                _set_matrix_property(obj, _PIVOT_TRANSFORM_BASIS_KEY, updated_transform_basis)
+            return True
+        return False
+
+    def __pivot_resolve_pending_state(self, obj, current_snapshot=None, scene=None):
+        try:
+            obj_ptr = obj.as_pointer()
+        except Exception:
+            return False
+        pending_snapshot = self._pivot_pending_snapshot.get(obj_ptr)
+        if pending_snapshot is None:
+            return False
+        if current_snapshot is None:
+            current_snapshot = self.__pivot_snapshot(obj)
+        if (
+            _matrices_close(pending_snapshot.get("basis"), current_snapshot.get("basis"))
+            and _points_close(pending_snapshot.get("local_corners"), current_snapshot.get("local_corners"))
+            and _points_close(pending_snapshot.get("world_corners"), current_snapshot.get("world_corners"))
+        ):
+            self._pivot_pending_snapshot.pop(obj_ptr, None)
+            return False
+        if self.__pivot_apply_snapshot_delta(obj, pending_snapshot, current_snapshot=current_snapshot, scene=scene):
+            self._pivot_pending_snapshot.pop(obj_ptr, None)
+            return True
+        return False
+
+    def __pivot_scene_modes(self, scene=None):
+        if scene is None:
+            scene = getattr(bpy.context, "scene", None)
+        mode = getattr(scene, "prop_plasticity_object_transform_control_mode", _PIVOT_MODE_PLASTICITY)
+        return mode, mode
+
+    def __pivot_current_basis(self, obj):
+        return obj.matrix_basis.copy()
+
+    def __pivot_current_local_compensation(self, obj):
+        compensation = _get_matrix_property(obj, _PIVOT_COMPENSATION_KEY)
+        if compensation is None:
+            return mathutils.Matrix.Identity(4)
+        return compensation
+
+    def __pivot_capture_current_state(self, obj, capture_pivot=False, capture_transform=False):
+        if not _is_plasticity_mesh_object(obj):
+            return None
+        import_basis, _, _, current_compensation = self.__pivot_ensure_state(obj)
+        if import_basis is None:
+            return None
+        current_basis = self.__pivot_current_basis(obj)
+        current_world_basis = current_basis @ current_compensation
+        if capture_pivot:
+            target_world_basis = current_world_basis if capture_transform else import_basis
+            compensation = current_basis.inverted_safe() @ target_world_basis
+            _set_matrix_property(obj, _PIVOT_IMPORT_BASIS_KEY, import_basis)
+            _set_matrix_property(obj, _PIVOT_PIVOT_BASIS_KEY, current_basis)
+            _set_matrix_property(obj, _PIVOT_COMPENSATION_KEY, compensation)
+        if capture_transform:
+            _set_matrix_property(obj, _PIVOT_TRANSFORM_BASIS_KEY, current_basis)
+        self._pivot_pending_snapshot.pop(obj.as_pointer(), None)
+        return import_basis
+
+    def __pivot_capture_scene_state(self, scene=None, capture_pivot=False, capture_transform=False):
+        if scene is None:
+            scene = getattr(bpy.context, "scene", None)
+        if scene is None:
+            return
+        for obj in scene.objects:
+            if not _is_plasticity_mesh_object(obj):
+                continue
+            import_basis = self.__pivot_capture_current_state(
+                obj,
+                capture_pivot=capture_pivot,
+                capture_transform=capture_transform,
+            )
+            if import_basis is None:
+                continue
+            self.__pivot_track_object(obj)
+
+    def __pivot_ensure_state(self, obj):
+        if not _is_plasticity_mesh_object(obj):
+            return None, None, None, None
+        import_basis = _get_matrix_property(obj, _PIVOT_IMPORT_BASIS_KEY)
+        if import_basis is None:
+            import_basis = _scale_only_basis(obj)
+            _set_matrix_property(obj, _PIVOT_IMPORT_BASIS_KEY, import_basis)
+        pivot_basis = _get_matrix_property(obj, _PIVOT_PIVOT_BASIS_KEY)
+        if pivot_basis is None:
+            pivot_basis = self.__pivot_current_basis(obj)
+            _set_matrix_property(obj, _PIVOT_PIVOT_BASIS_KEY, pivot_basis)
+        transform_basis = _get_matrix_property(obj, _PIVOT_TRANSFORM_BASIS_KEY)
+        if transform_basis is None:
+            transform_basis = import_basis.copy()
+            _set_matrix_property(obj, _PIVOT_TRANSFORM_BASIS_KEY, transform_basis)
+        compensation = _get_matrix_property(obj, _PIVOT_COMPENSATION_KEY)
+        if compensation is None:
+            compensation = mathutils.Matrix.Identity(4)
+            _set_matrix_property(obj, _PIVOT_COMPENSATION_KEY, compensation)
+        return import_basis, pivot_basis, transform_basis, compensation
+
+    def __pivot_effective_state(self, obj, scene=None):
+        import_basis, pivot_basis, transform_basis, current_compensation = self.__pivot_ensure_state(obj)
+        if import_basis is None:
+            identity = mathutils.Matrix.Identity(4)
+            return identity, identity, identity, identity, current_compensation
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        effective_world_basis = transform_basis if transform_mode == _PIVOT_MODE_BLENDER else import_basis
+        effective_object_basis = pivot_basis if pivot_mode == _PIVOT_MODE_BLENDER else import_basis
+        if pivot_mode == _PIVOT_MODE_BLENDER and transform_mode == _PIVOT_MODE_BLENDER:
+            effective_object_basis = transform_basis
+            effective_local_compensation = current_compensation
+            effective_world_basis = effective_object_basis
+        elif pivot_mode == _PIVOT_MODE_BLENDER:
+            effective_local_compensation = effective_object_basis.inverted_safe() @ effective_world_basis
+        else:
+            effective_local_compensation = import_basis.inverted_safe() @ effective_world_basis
+        return (
+            import_basis,
+            effective_world_basis,
+            effective_object_basis,
+            effective_local_compensation,
+            current_compensation,
+        )
+
+    def __pivot_prepare_import_geometry(self, obj, verts, normals, scene=None):
+        _, _, _, compensation, _ = self.__pivot_effective_state(obj, scene)
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        if pivot_mode == _PIVOT_MODE_BLENDER and transform_mode == _PIVOT_MODE_BLENDER:
+            current_local_center = _bbox_center_from_object(obj)
+            import_local_center = _bbox_center_from_flat_verts(verts)
+            rotation_only = compensation.to_quaternion().to_matrix()
+            rotated_import_center = rotation_only @ import_local_center
+            compensation = compensation.copy()
+            compensation[0][3] = float(current_local_center.x - rotated_import_center.x)
+            compensation[1][3] = float(current_local_center.y - rotated_import_center.y)
+            compensation[2][3] = float(current_local_center.z - rotated_import_center.z)
+        transformed_verts = _transform_vertices(verts, compensation)
+        transformed_normals = _transform_normals(normals, compensation)
+        return transformed_verts, transformed_normals, compensation
+
+    def __pivot_apply_rebuild_state(self, obj, scene=None, compensation=None):
+        _, _, effective_object_basis, effective_local_compensation, _ = self.__pivot_effective_state(obj, scene)
+        if compensation is None:
+            compensation = effective_local_compensation
+        obj.matrix_basis = effective_object_basis
+        _set_matrix_property(obj, _PIVOT_COMPENSATION_KEY, compensation)
+
+    def capture_current_pivot_state(self, scene=None):
+        self.__pivot_capture_scene_state(scene=scene, capture_pivot=True, capture_transform=False)
+
+    def capture_current_transform_state(self, scene=None):
+        self.__pivot_capture_scene_state(scene=scene, capture_pivot=False, capture_transform=True)
+
+    def capture_current_transform_control_state(self, scene=None):
+        self.__pivot_capture_scene_state(scene=scene, capture_pivot=True, capture_transform=True)
+
+    def bootstrap_pivot_state(self, scene=None):
+        if scene is None:
+            scene = getattr(bpy.context, "scene", None)
+        self.__pivot_clear_runtime()
+        if scene is None:
+            return
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        capture_pivot = pivot_mode == _PIVOT_MODE_BLENDER
+        capture_transform = transform_mode == _PIVOT_MODE_BLENDER
+        for obj in scene.objects:
+            if not _is_plasticity_mesh_object(obj):
+                continue
+            self.__pivot_ensure_state(obj)
+            if capture_pivot or capture_transform:
+                import_basis = self.__pivot_capture_current_state(
+                    obj,
+                    capture_pivot=capture_pivot,
+                    capture_transform=capture_transform,
+                )
+                if import_basis is None:
+                    continue
+            self.__pivot_track_object(obj)
+
+    def process_pivot_depsgraph_updates(self, depsgraph):
+        updates = getattr(depsgraph, "updates", None)
+        if not updates:
+            return
+
+        changed_objects = {}
+
+        for update in updates:
+            id_data = getattr(update, "id", None)
+            if isinstance(id_data, bpy.types.Object):
+                obj = id_data
+                if not _is_plasticity_mesh_object(obj):
+                    continue
+                obj_ptr = obj.as_pointer()
+                changed_objects[obj_ptr] = obj
+            elif isinstance(id_data, bpy.types.Mesh):
+                mesh_ptr = id_data.as_pointer()
+                for obj_ptr in tuple(self._pivot_mesh_users.get(mesh_ptr, ())):
+                    obj = self._pivot_objects.get(obj_ptr)
+                    if obj is None:
+                        self.__pivot_untrack_object(obj_ptr)
+                        continue
+                    try:
+                        if not _is_plasticity_mesh_object(obj):
+                            self.__pivot_untrack_object(obj_ptr)
+                            continue
+                        if obj.data != id_data:
+                            self.__pivot_track_object(obj)
+                            if obj.data != id_data:
+                                continue
+                    except ReferenceError:
+                        self.__pivot_untrack_object(obj_ptr)
+                        continue
+                    changed_objects[obj_ptr] = obj
+
+        allow_capture = getattr(bpy.context, "mode", None) == 'OBJECT'
+        scene = getattr(bpy.context, "scene", None)
+        for obj_ptr, obj in changed_objects.items():
+            try:
+                import_basis, _, _, current_compensation = self.__pivot_ensure_state(obj)
+                current_snapshot = self.__pivot_snapshot(obj)
+            except ReferenceError:
+                self.__pivot_untrack_object(obj_ptr)
+                continue
+
+            previous_snapshot = self._pivot_last_snapshot.get(obj_ptr)
+            if obj_ptr in self._pivot_suppressed:
+                self._pivot_suppressed.discard(obj_ptr)
+                if previous_snapshot is not None:
+                    suppressed_unchanged = (
+                        _matrices_close(previous_snapshot.get("basis"), current_snapshot.get("basis"))
+                        and _points_close(previous_snapshot.get("local_corners"), current_snapshot.get("local_corners"))
+                        and _points_close(previous_snapshot.get("world_corners"), current_snapshot.get("world_corners"))
+                    )
+                    if suppressed_unchanged:
+                        self.__pivot_track_object(obj, snapshot=current_snapshot)
+                        continue
+
+            if allow_capture and self.__pivot_resolve_pending_state(obj, current_snapshot=current_snapshot, scene=scene):
+                self.__pivot_track_object(obj, snapshot=current_snapshot)
+                continue
+
+            basis_changed = False
+            local_changed = False
+            world_same = False
+            if previous_snapshot is not None:
+                basis_changed = not _matrices_close(previous_snapshot.get("basis"), current_snapshot.get("basis"))
+                local_changed = not _points_close(
+                    previous_snapshot.get("local_corners"),
+                    current_snapshot.get("local_corners"),
+                )
+                world_same = _points_close(
+                    previous_snapshot.get("world_corners"),
+                    current_snapshot.get("world_corners"),
+                )
+
+            if allow_capture and previous_snapshot is not None and import_basis is not None and basis_changed:
+                if local_changed and world_same:
+                    self.__pivot_apply_snapshot_delta(obj, previous_snapshot, current_snapshot=current_snapshot, scene=scene)
+                    self._pivot_pending_snapshot.pop(obj_ptr, None)
+                elif not local_changed and not world_same:
+                    self._pivot_pending_snapshot.setdefault(obj_ptr, previous_snapshot)
+
+            self.__pivot_track_object(obj, snapshot=current_snapshot)
+
     def __create_mesh(self, name, verts, indices, normals, groups, face_ids):
         mesh = bpy.data.meshes.new(name)
         mesh.vertices.add(len(verts) // 3)
@@ -87,6 +621,27 @@ class SceneHandler:
             bpy.ops.object.mode_set(mode='OBJECT')
 
         obj.name = name
+        scene = getattr(bpy.context, "scene", None)
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        capture_pivot = pivot_mode == _PIVOT_MODE_BLENDER
+        capture_transform = transform_mode == _PIVOT_MODE_BLENDER
+        if capture_pivot and capture_transform:
+            self.__pivot_resolve_pending_state(obj, scene=scene)
+            self.__pivot_capture_current_state(
+                obj,
+                capture_pivot=False,
+                capture_transform=True,
+            )
+        elif capture_pivot or capture_transform:
+            self.__pivot_capture_current_state(
+                obj,
+                capture_pivot=capture_pivot,
+                capture_transform=capture_transform,
+            )
+        else:
+            self.__pivot_resolve_pending_state(obj, scene=scene)
+        self.__pivot_suppress_object(obj)
+        verts, normals, compensation = self.__pivot_prepare_import_geometry(obj, verts, normals, scene=scene)
 
         mesh = obj.data
         mesh.clear_geometry()
@@ -107,12 +662,35 @@ class SceneHandler:
         _apply_plasticity_groups_and_normals(
             mesh, indices, normals, groups, face_ids)
 
+        self.__pivot_apply_rebuild_state(obj, compensation=compensation)
         self.update_pivot(obj)
+        self.__pivot_track_object(obj)
 
     def __update_mesh_ngons(self, obj, version, faces, verts, indices, normals, groups, face_ids):
         if obj.mode == 'EDIT':
             bpy.ops.object.mode_set(mode='OBJECT')
 
+        scene = getattr(bpy.context, "scene", None)
+        pivot_mode, transform_mode = self.__pivot_scene_modes(scene)
+        capture_pivot = pivot_mode == _PIVOT_MODE_BLENDER
+        capture_transform = transform_mode == _PIVOT_MODE_BLENDER
+        if capture_pivot and capture_transform:
+            self.__pivot_resolve_pending_state(obj, scene=scene)
+            self.__pivot_capture_current_state(
+                obj,
+                capture_pivot=False,
+                capture_transform=True,
+            )
+        elif capture_pivot or capture_transform:
+            self.__pivot_capture_current_state(
+                obj,
+                capture_pivot=capture_pivot,
+                capture_transform=capture_transform,
+            )
+        else:
+            self.__pivot_resolve_pending_state(obj, scene=scene)
+        self.__pivot_suppress_object(obj)
+        verts, normals, compensation = self.__pivot_prepare_import_geometry(obj, verts, normals, scene=scene)
         mesh = obj.data
         mesh.clear_geometry()
 
@@ -152,7 +730,9 @@ class SceneHandler:
         _apply_plasticity_groups_and_normals(
             mesh, indices, normals, groups, face_ids)
 
+        self.__pivot_apply_rebuild_state(obj, compensation=compensation)
         self.update_pivot(obj)
+        self.__pivot_track_object(obj)
 
     def update_pivot(self, obj):
         # NOTE: this doesn't work unfortunately. It seems like changing matrix_world or matrix_local
@@ -178,12 +758,14 @@ class SceneHandler:
         self.files[filename][PlasticityIdUniquenessScope.ITEM][plasticity_id] = mesh_obj
         mesh_obj["plasticity_id"] = plasticity_id
         mesh_obj["plasticity_filename"] = filename
+        self.__pivot_suppress_object(mesh_obj)
         return mesh_obj
 
     def __delete_object(self, filename, version, plasticity_id):
         obj = self.files[filename][PlasticityIdUniquenessScope.ITEM].pop(
             plasticity_id, None)
         if obj:
+            self.__pivot_untrack_object(obj)
             bpy.data.objects.remove(obj, do_unlink=True)
 
     def __delete_group(self, filename, version, plasticity_id):
@@ -220,6 +802,8 @@ class SceneHandler:
                                             plasticity_id, name, mesh)
                     obj.scale = (prop_plasticity_unit_scale,
                                  prop_plasticity_unit_scale, prop_plasticity_unit_scale)
+                    self.__pivot_ensure_state(obj)
+                    self.__pivot_track_object(obj)
                 else:
                     obj = self.files[filename][PlasticityIdUniquenessScope.ITEM].get(
                         plasticity_id)
@@ -556,6 +1140,7 @@ class SceneHandler:
     def on_connect(self):
         bpy.context.window_manager.plasticity_busy = False
         self.files = {}
+        self.bootstrap_pivot_state(getattr(bpy.context, "scene", None))
 
     def on_disconnect(self):
         bpy.context.window_manager.plasticity_busy = False

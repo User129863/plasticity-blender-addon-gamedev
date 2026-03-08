@@ -456,8 +456,6 @@ class MergeUVSeams(bpy.types.Operator):
         )
         prev_active = context.view_layer.objects.active
         any_processed = False
-        multi_edit_mesh = len(edit_objects) > 1
-        needs_deferred_unwrap = False
 
         prev_suppress = _LIVE_EXPAND_SUPPRESS_AUTO_MERGE
         prev_suspended = _LIVE_EXPAND_SUSPENDED
@@ -515,39 +513,27 @@ class MergeUVSeams(bpy.types.Operator):
                     any_processed = True
                     _touch_seams_version(mesh)
                     bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
-                    if multi_edit_mesh:
-                        if prev_active != obj:
-                            context.view_layer.objects.active = obj
-                        _touch_live_unwrap_after_seam_change(
+                    if context.view_layer.objects.active != obj:
+                        context.view_layer.objects.active = obj
+                    # In multi-object edit mode, a single deferred unwrap can
+                    # update only one active object visually. Run per-object
+                    # unwrap + fallback so each changed object refreshes live.
+                    did_unwrap = _touch_live_unwrap_after_seam_change(
+                        context,
+                        changed_to_true,
+                        changed_to_false,
+                        target_face_indices=original_selected,
+                    )
+                    if not did_unwrap:
+                        if not _fallback_live_unwrap_after_seam_change(
                             context,
                             changed_to_true,
                             changed_to_false,
                             target_face_indices=original_selected,
-                        )
-                        needs_deferred_unwrap = True
-                    else:
-                        if prev_active != obj:
-                            context.view_layer.objects.active = obj
-                        did_unwrap = _touch_live_unwrap_after_seam_change(
-                            context,
-                            changed_to_true,
-                            changed_to_false,
-                            target_face_indices=original_selected,
-                        )
-                        if not did_unwrap:
-                            if not _fallback_live_unwrap_after_seam_change(
-                                context,
-                                changed_to_true,
-                                changed_to_false,
-                                target_face_indices=original_selected,
-                            ):
-                                _queue_live_unwrap()
+                        ):
+                            _queue_live_unwrap()
 
                 _invalidate_live_expand_overlay_cache()
-
-            if needs_deferred_unwrap:
-                if not _maybe_live_unwrap(context, force=True):
-                    _queue_live_unwrap()
 
             if prev_active is not None:
                 context.view_layer.objects.active = prev_active
@@ -7510,7 +7496,36 @@ def _live_expand_timer():
     any_changes = False
     prev_active = context.view_layer.objects.active
     multi_edit_mesh = len(edit_objects) > 1
-    needs_deferred_unwrap = False
+    # Multi-object fallback unwrap is expensive in Blender 5 on large scenes.
+    # Allow one explicit fallback per timer pass; queue remaining updates.
+    multi_fallback_budget = 1 if multi_edit_mesh else 0
+
+    def _run_live_unwrap_after_seam_change(changed_to_true, changed_to_false, target_face_indices):
+        nonlocal multi_fallback_budget
+        did_unwrap = _touch_live_unwrap_after_seam_change(
+            context,
+            changed_to_true,
+            changed_to_false,
+            target_face_indices=target_face_indices,
+        )
+        if did_unwrap:
+            return True
+
+        allow_fallback = (not multi_edit_mesh) or (multi_fallback_budget > 0)
+        if allow_fallback:
+            did_fallback = _fallback_live_unwrap_after_seam_change(
+                context,
+                changed_to_true,
+                changed_to_false,
+                target_face_indices=target_face_indices,
+            )
+            if multi_edit_mesh:
+                multi_fallback_budget -= 1
+            if did_fallback:
+                return True
+
+        _queue_live_unwrap()
+        return False
 
     for obj in edit_objects:
         mesh = obj.data
@@ -7570,33 +7585,13 @@ def _live_expand_timer():
                     any_changes = True
                     _touch_seams_version(mesh)
                     bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
-                    if multi_edit_mesh:
-                        if context.view_layer.objects.active != obj:
-                            context.view_layer.objects.active = obj
-                        _touch_live_unwrap_after_seam_change(
-                            context,
-                            changed_to_true,
-                            changed_to_false,
-                            target_face_indices=current_selection,
-                        )
-                        needs_deferred_unwrap = True
-                    else:
-                        if context.view_layer.objects.active != obj:
-                            context.view_layer.objects.active = obj
-                        did_unwrap = _touch_live_unwrap_after_seam_change(
-                            context,
-                            changed_to_true,
-                            changed_to_false,
-                            target_face_indices=current_selection,
-                        )
-                        if not did_unwrap:
-                            if not _fallback_live_unwrap_after_seam_change(
-                                context,
-                                changed_to_true,
-                                changed_to_false,
-                                target_face_indices=current_selection,
-                            ):
-                                _queue_live_unwrap()
+                    if context.view_layer.objects.active != obj:
+                        context.view_layer.objects.active = obj
+                    _run_live_unwrap_after_seam_change(
+                        changed_to_true,
+                        changed_to_false,
+                        current_selection,
+                    )
                     _invalidate_live_expand_overlay_cache()
 
             _LIVE_EXPAND_BASE_SELECTION[obj.name] = set(current_selection)
@@ -7756,33 +7751,13 @@ def _live_expand_timer():
             if did_merge:
                 _touch_seams_version(mesh)
                 bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
-                if multi_edit_mesh:
-                    if context.view_layer.objects.active != obj:
-                        context.view_layer.objects.active = obj
-                    _touch_live_unwrap_after_seam_change(
-                        context,
-                        changed_to_true,
-                        changed_to_false,
-                        target_face_indices=expanded_faces,
-                    )
-                    needs_deferred_unwrap = True
-                else:
-                    if context.view_layer.objects.active != obj:
-                        context.view_layer.objects.active = obj
-                    did_unwrap = _touch_live_unwrap_after_seam_change(
-                        context,
-                        changed_to_true,
-                        changed_to_false,
-                        target_face_indices=expanded_faces,
-                    )
-                    if not did_unwrap:
-                        if not _fallback_live_unwrap_after_seam_change(
-                            context,
-                            changed_to_true,
-                            changed_to_false,
-                            target_face_indices=expanded_faces,
-                        ):
-                            _queue_live_unwrap()
+                if context.view_layer.objects.active != obj:
+                    context.view_layer.objects.active = obj
+                _run_live_unwrap_after_seam_change(
+                    changed_to_true,
+                    changed_to_false,
+                    expanded_faces,
+                )
             elif selection_filtered:
                 bmesh.update_edit_mesh(mesh, loop_triangles=False, destructive=False)
             _LIVE_EXPAND_EXPANDED_SELECTION[obj.name] = expanded_faces
@@ -7925,40 +7900,16 @@ def _live_expand_timer():
         bmesh.update_edit_mesh(mesh, loop_triangles=True, destructive=False)
         if changed_to_true or changed_to_false:
             _touch_seams_version(mesh)
-            if multi_edit_mesh:
-                if context.view_layer.objects.active != obj:
-                    context.view_layer.objects.active = obj
-                _touch_live_unwrap_after_seam_change(
-                    context,
-                    changed_to_true,
-                    changed_to_false,
-                    target_face_indices=expanded_faces,
-                )
-                needs_deferred_unwrap = True
-            else:
-                if context.view_layer.objects.active != obj:
-                    context.view_layer.objects.active = obj
-                did_unwrap = _touch_live_unwrap_after_seam_change(
-                    context,
-                    changed_to_true,
-                    changed_to_false,
-                    target_face_indices=expanded_faces,
-                )
-                if not did_unwrap:
-                    if not _fallback_live_unwrap_after_seam_change(
-                        context,
-                        changed_to_true,
-                        changed_to_false,
-                        target_face_indices=expanded_faces,
-                    ):
-                        _queue_live_unwrap()
+            if context.view_layer.objects.active != obj:
+                context.view_layer.objects.active = obj
+            _run_live_unwrap_after_seam_change(
+                changed_to_true,
+                changed_to_false,
+                expanded_faces,
+            )
         _LIVE_EXPAND_EXPANDED_SELECTION[obj.name] = expanded_faces
         _LIVE_EXPAND_LAST_MERGE_SETTINGS[obj.name] = merge_settings
         _LIVE_EXPAND_BASE_SELECTION[obj.name] = base_selection
-
-    if needs_deferred_unwrap:
-        if not _maybe_live_unwrap(context, force=True):
-            _queue_live_unwrap()
 
     if prev_active and prev_active != context.view_layer.objects.active:
         context.view_layer.objects.active = prev_active

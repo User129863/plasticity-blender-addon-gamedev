@@ -2,7 +2,7 @@ bl_info = {
     "name": "Plasticity Blender Addon Gamedev",
     "description": "Game development focused fork of the Plasticity Blender add-on.",
     "author": "Nick Kallen, User129863",
-    "version": (1, 2, 3),
+    "version": (1, 3, 0),
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Plasticity",
     "category": "Object",
@@ -22,7 +22,7 @@ from .handler import SceneHandler
 handler = SceneHandler()
 plasticity_client = PlasticityClient(handler)
 
-addon_name = bl_info["name"].replace(" ", "_")  
+addon_name = bl_info["name"].replace(" ", "_")
 
 base_path = bpy.utils.script_path_user()
 presets_folder = os.path.join(base_path, 'presets', addon_name)
@@ -35,12 +35,12 @@ PRESET_FILE_PATH = os.path.join(presets_folder, 'refacet_presets.json')
 # Save Refacet presets
 def save_presets():
     presets = []
-    for preset in bpy.context.scene.refacet_presets:        
-        preset_dict = preset.to_dict()        
+    for preset in bpy.context.scene.refacet_presets:
+        preset_dict = preset.to_dict()
         presets.append(preset_dict)
-            
+
     with open(PRESET_FILE_PATH, 'w') as f:
-        json.dump(presets, f)           
+        json.dump(presets, f)
 
 # Load refacet presets
 @persistent
@@ -72,12 +72,23 @@ def load_presets(dummy):
     _sync_live_expand_runtime(bpy.context)
     _sync_live_paint_runtime(bpy.context)
     _schedule_live_expand_sync()
+    _bootstrap_pivot_runtime(scene)
+
+
+def _bootstrap_pivot_runtime(scene=None):
+    target_scene = scene if scene is not None else getattr(bpy.context, "scene", None)
+    if target_scene is None:
+        return
+    try:
+        handler.bootstrap_pivot_state(target_scene)
+    except Exception:
+        pass
 
 def update_and_save_preset(self, context):
     save_presets()
-    
+
 def update_name(self, context):
-    save_presets()    
+    save_presets()
 
 def _density_to_plane_tolerance(density):
     return max(0.0001, 0.01 * (1.0 - density))
@@ -300,6 +311,25 @@ def _on_mode_change(scene, depsgraph):
         bpy.app.timers.register(_deferred_object_mode_reset, first_interval=_OBJECT_MODE_RESET_DELAY)
     except Exception:
         pass
+
+
+@persistent
+def _on_plasticity_pivot_update(scene, depsgraph):
+    try:
+        handler.process_pivot_depsgraph_updates(depsgraph)
+    except Exception:
+        pass
+
+
+def update_object_transform_control_mode(self, context):
+    scene = getattr(context, "scene", None) if context else getattr(bpy.context, "scene", None)
+    if scene is None:
+        return
+    if getattr(scene, "prop_plasticity_object_transform_control_mode", "PLASTICITY") == "BLENDER":
+        try:
+            handler.capture_current_transform_control_state(scene)
+        except Exception:
+            pass
 
 def update_live_refacet(self, context):
     if not self.prop_plasticity_live_refacet:
@@ -532,12 +562,12 @@ class OBJECT_UL_RefacetPresetsList(bpy.types.UIList):
             layout.prop(item, "name", text="", emboss=False, icon_value=icon)
         elif self.layout_type in {'GRID'}:
             layout.alignment = 'CENTER'
-            layout.label(text="", icon_value=icon)    
+            layout.label(text="", icon_value=icon)
 
-# Refacet Preset Class    
-class RefacetPreset(bpy.types.PropertyGroup):              
+# Refacet Preset Class
+class RefacetPreset(bpy.types.PropertyGroup):
     name: bpy.props.StringProperty(name="Name", default="New Preset", update=update_name)
-    
+
     # Basic settings
     density: bpy.props.FloatProperty(
         name="Density",
@@ -561,9 +591,9 @@ class RefacetPreset(bpy.types.PropertyGroup):
         default='TRI',
         update=update_and_save_preset,
     )
-    
+
     # Advanced settings
-    min_width: bpy.props.FloatProperty(name="Min Width", default=0.01, min=0, max=10, unit="LENGTH", update=update_and_save_preset)    
+    min_width: bpy.props.FloatProperty(name="Min Width", default=0.01, min=0, max=10, unit="LENGTH", update=update_and_save_preset)
     min_width_enabled: bpy.props.BoolProperty(
         name="Min Width",
         default=False,
@@ -578,7 +608,7 @@ class RefacetPreset(bpy.types.PropertyGroup):
     Edge_chord_tolerance: bpy.props.FloatProperty(name="Edge chord tolerance", default=0.01, min=0.0001, step=0.01, max=1.0, precision=6, update=update_and_save_preset)
     Edge_Angle_tolerance: bpy.props.FloatProperty(name="Edge Angle tolerance", default=0.45, min=0.1, max=1.0, update=update_and_save_preset)
     Face_plane_tolerance: bpy.props.FloatProperty(name="Face plane tolerance", default=0.01, min=0.0001, step=0.01, max=1.0, precision=6, update=update_and_save_preset)
-    Face_Angle_tolerance: bpy.props.FloatProperty(name="Face Angle tolerance", default=0.45, min=0.1, max=1.0, update=update_and_save_preset)     
+    Face_Angle_tolerance: bpy.props.FloatProperty(name="Face Angle tolerance", default=0.45, min=0.1, max=1.0, update=update_and_save_preset)
     plane_angle: bpy.props.FloatProperty(
         name="Plane Angle",
         default=0.1,
@@ -620,20 +650,20 @@ class RefacetPreset(bpy.types.PropertyGroup):
     )
 
     def to_dict(self):
-        return {attr: getattr(self, attr) for attr in dir(self) 
-                if not callable(getattr(self, attr)) 
-                and not attr.startswith("__") 
+        return {attr: getattr(self, attr) for attr in dir(self)
+                if not callable(getattr(self, attr))
+                and not attr.startswith("__")
                 and isinstance(getattr(self, attr), (int, float, str))}
 
     def from_dict(self, preset_dict):
         for attr, value in preset_dict.items():
-            setattr(self, attr, value)                 
+            setattr(self, attr, value)
 
 class AddRefacetPresetOperator(bpy.types.Operator):
     bl_idname = "refacet_preset.add"
     bl_label = "Add Refacet Preset"
     bl_description = "Create a new refacet preset and save it to disk"
-    
+
     def execute(self, context):
         preset = context.scene.refacet_presets.add()
         preset.name = "New Preset"
@@ -644,7 +674,7 @@ class RemoveRefacetPresetOperator(bpy.types.Operator):
     bl_idname = "refacet_preset.remove"
     bl_label = "Remove Refacet Preset"
     bl_description = "Delete the active refacet preset and save changes (destructive)"
-    
+
     def execute(self, context):
         index = context.scene.active_refacet_preset_index
         context.scene.refacet_presets.remove(index)
@@ -658,7 +688,7 @@ class RemoveRefacetPresetOperator(bpy.types.Operator):
         return {'FINISHED'}
 
 def select_similar(self, context):
-    self.layout.operator(operators.SelectByFaceIDOperator.bl_idname)   
+    self.layout.operator(operators.SelectByFaceIDOperator.bl_idname)
 
 def register():
     print("Registering Plasticity client")
@@ -673,8 +703,8 @@ def register():
     bpy.types.Scene.refacet_presets = bpy.props.CollectionProperty(type=RefacetPreset)
     bpy.types.Scene.active_refacet_preset_index = bpy.props.IntProperty(name="Active Preset", default=0)
     bpy.utils.register_class(AddRefacetPresetOperator)
-    bpy.utils.register_class(RemoveRefacetPresetOperator) 
-   
+    bpy.utils.register_class(RemoveRefacetPresetOperator)
+
     bpy.utils.register_class(ui.PlasticityPanel)
     bpy.utils.register_class(operators.SelectByFaceIDOperator)
     bpy.utils.register_class(operators.SelectByFaceIDEdgeOperator)
@@ -689,9 +719,9 @@ def register():
     bpy.utils.register_class(operators.ClearPlasticityFaceMaterialMappingOperator)
     bpy.utils.register_class(operators.SimilarGeometrySelector)
     bpy.utils.register_class(operators.SelectedJoiner)
-    bpy.utils.register_class(operators.SelectedUnjoiner)    
-    bpy.utils.register_class(operators.NonOverlappingMeshesMerger)   
-    bpy.utils.register_class(operators.OpenUVEditorOperator) 
+    bpy.utils.register_class(operators.SelectedUnjoiner)
+    bpy.utils.register_class(operators.NonOverlappingMeshesMerger)
+    bpy.utils.register_class(operators.OpenUVEditorOperator)
     bpy.utils.register_class(operators.CloseUVEditorOperator)
     bpy.utils.register_class(operators.MaterialRemover)
     bpy.utils.register_class(operators.AssignUVCheckerTextureOperator)
@@ -1000,6 +1030,15 @@ def register():
     )
     bpy.types.Scene.prop_plasticity_ui_show_uv_tools = bpy.props.BoolProperty(name="UV Tools", default=True)
     bpy.types.Scene.prop_plasticity_ui_show_mesh_tools = bpy.props.BoolProperty(name="Mesh Tools", default=True)
+    bpy.types.Scene.prop_plasticity_object_transform_control_mode = bpy.props.EnumProperty(
+        name="Plasticity Object Transform Control",
+        items=[
+            ("PLASTICITY", "Plasticity", "Use the imported/default transform behavior on future rebuilds"),
+            ("BLENDER", "Blender", "Preserve Blender pivot, position, and rotation on future rebuilds"),
+        ],
+        default="PLASTICITY",
+        update=update_object_transform_control_mode,
+    )
     bpy.types.Scene.prop_plasticity_pin_live_link = bpy.props.BoolProperty(name="Pin Live Link", default=False)
     bpy.types.Scene.prop_plasticity_pin_refresh = bpy.props.BoolProperty(name="Pin Refresh", default=False)
     bpy.types.Scene.prop_plasticity_pin_only_visible = bpy.props.BoolProperty(name="Pin Only Visible", default=False)
@@ -1049,6 +1088,7 @@ def register():
     bpy.types.Scene.prop_plasticity_pin_uv_assign_checker = bpy.props.BoolProperty(name="Pin Assign Checker", default=True)
     bpy.types.Scene.prop_plasticity_pin_uv_remove_checker = bpy.props.BoolProperty(name="Pin Remove Checker Material", default=False)
     bpy.types.Scene.prop_plasticity_pin_mesh_select_similar = bpy.props.BoolProperty(name="Pin Select Similar Geometry", default=True)
+    bpy.types.Scene.prop_plasticity_pin_mesh_object_transform_control_mode = bpy.props.BoolProperty(name="Pin Object Transform Control Mode", default=False)
     bpy.types.Scene.prop_plasticity_pin_mesh_join = bpy.props.BoolProperty(name="Pin Join Selected", default=False)
     bpy.types.Scene.prop_plasticity_pin_mesh_unjoin = bpy.props.BoolProperty(name="Pin Unjoin Selected", default=False)
     bpy.types.Scene.prop_plasticity_pin_mesh_merge_nonoverlapping = bpy.props.BoolProperty(name="Pin Merge Non-overlapping Meshes", default=False)
@@ -1153,7 +1193,7 @@ def register():
         default=True,
     )
     bpy.types.Scene.mark_seam = bpy.props.BoolProperty(name="Mark Seam")
-    bpy.types.Scene.mark_sharp = bpy.props.BoolProperty(name="Mark Sharp") 
+    bpy.types.Scene.mark_sharp = bpy.props.BoolProperty(name="Mark Sharp")
     bpy.types.WindowManager.plasticity_busy = bpy.props.BoolProperty(name="Plasticity busy", default=False, options={'HIDDEN'}
 )
     bpy.types.Scene.overlap_threshold = bpy.props.FloatProperty(
@@ -1178,12 +1218,14 @@ def register():
         description="The object to use as the center for the mirror operation",
         type=bpy.types.Object
     )
-        
-    bpy.utils.register_class(OBJECT_UL_RefacetPresetsList)  
 
-    bpy.app.handlers.load_post.append(load_presets)    
+    bpy.utils.register_class(OBJECT_UL_RefacetPresetsList)
+
+    bpy.app.handlers.load_post.append(load_presets)
     if _on_mode_change not in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.append(_on_mode_change)
+    if _on_plasticity_pivot_update not in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.append(_on_plasticity_pivot_update)
 
     try:
         _initialize_checker_library()
@@ -1199,6 +1241,7 @@ def register():
     except Exception:
         pass
     _schedule_live_expand_sync()
+    _bootstrap_pivot_runtime(getattr(bpy.context, "scene", None))
 
     print("Plasticity client registered")
 
@@ -1231,13 +1274,13 @@ def unregister():
     bpy.utils.unregister_class(ui.SubscribeAllButton)
     bpy.utils.unregister_class(ui.UnsubscribeAllButton)
     bpy.utils.unregister_class(ui.RefacetButton)
-    
+
     bpy.utils.unregister_class(RefacetPreset)
     bpy.utils.unregister_class(AddRefacetPresetOperator)
     bpy.utils.unregister_class(RemoveRefacetPresetOperator)
     del bpy.types.Scene.refacet_presets
-    del bpy.types.Scene.active_refacet_preset_index 
-          
+    del bpy.types.Scene.active_refacet_preset_index
+
     bpy.utils.unregister_class(operators.SelectByFaceIDOperator)
     bpy.utils.unregister_class(operators.SelectByFaceIDEdgeOperator)
     bpy.utils.unregister_class(operators.AutoMarkEdgesOperator)
@@ -1250,10 +1293,10 @@ def unregister():
     bpy.utils.unregister_class(operators.CapturePlasticityFaceMaterialMappingOperator)
     bpy.utils.unregister_class(operators.PaintPlasticityFacesOperator)
     bpy.utils.unregister_class(operators.SimilarGeometrySelector)
-    bpy.utils.unregister_class(operators.SelectedJoiner) 
-    bpy.utils.unregister_class(operators.SelectedUnjoiner)     
+    bpy.utils.unregister_class(operators.SelectedJoiner)
+    bpy.utils.unregister_class(operators.SelectedUnjoiner)
     bpy.utils.unregister_class(operators.NonOverlappingMeshesMerger)
-    bpy.utils.unregister_class(operators.OpenUVEditorOperator)  
+    bpy.utils.unregister_class(operators.OpenUVEditorOperator)
     bpy.utils.unregister_class(operators.CloseUVEditorOperator)
     bpy.utils.unregister_class(operators.MaterialRemover)
     bpy.utils.unregister_class(operators.AssignUVCheckerTextureOperator)
@@ -1275,12 +1318,14 @@ def unregister():
     operators.clear_checker_previews()
 
     bpy.types.VIEW3D_MT_edit_mesh_select_similar.remove(select_similar)
-    
-    bpy.utils.unregister_class(OBJECT_UL_RefacetPresetsList)    
-    
+
+    bpy.utils.unregister_class(OBJECT_UL_RefacetPresetsList)
+
     bpy.app.handlers.load_post.remove(load_presets)
     if _on_mode_change in bpy.app.handlers.depsgraph_update_post:
         bpy.app.handlers.depsgraph_update_post.remove(_on_mode_change)
+    if _on_plasticity_pivot_update in bpy.app.handlers.depsgraph_update_post:
+        bpy.app.handlers.depsgraph_update_post.remove(_on_plasticity_pivot_update)
 
     del bpy.types.Scene.prop_plasticity_server
     del bpy.types.Scene.prop_plasticity_facet_tolerance
@@ -1328,6 +1373,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_ui_util_highlight
     del bpy.types.Scene.prop_plasticity_ui_show_uv_tools
     del bpy.types.Scene.prop_plasticity_ui_show_mesh_tools
+    del bpy.types.Scene.prop_plasticity_object_transform_control_mode
     del bpy.types.Scene.prop_plasticity_pin_live_link
     del bpy.types.Scene.prop_plasticity_pin_refresh
     del bpy.types.Scene.prop_plasticity_pin_only_visible
@@ -1377,6 +1423,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_pin_uv_assign_checker
     del bpy.types.Scene.prop_plasticity_pin_uv_remove_checker
     del bpy.types.Scene.prop_plasticity_pin_mesh_select_similar
+    del bpy.types.Scene.prop_plasticity_pin_mesh_object_transform_control_mode
     del bpy.types.Scene.prop_plasticity_pin_mesh_join
     del bpy.types.Scene.prop_plasticity_pin_mesh_unjoin
     del bpy.types.Scene.prop_plasticity_pin_mesh_merge_nonoverlapping
