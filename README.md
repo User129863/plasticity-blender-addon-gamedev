@@ -125,4 +125,12 @@ https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
 - Merge Seams fixes when multiple objects are selected.
 - General bug fixes and stability improvements.
 
+## Version 1.3 updates
+
+- Added a new Plasticity Object Transform Control option in Mesh Tools.
+- Blender can now preserve locally edited pivot, object position, and object rotation through refacet/refresh when the control is set to Blender, making it easier to do assembly work directly in Blender.
+- General bug fixes and stability improvements.
+
+https://github.com/user-attachments/assets/2df026d0-9198-4e3b-8dd9-8b82ee5f9f59
+https://github.com/user-attachments/assets/1a82a74e-6c7b-43f2-b34f-e15be29ccfc3
 
