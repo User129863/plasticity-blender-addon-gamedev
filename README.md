@@ -11,7 +11,9 @@
   Gamepad Model by: <a href="https://www.youtube.com/@Kuechmeister">Kuechmeister Swagger</a>
 </p>
 
-Unofficial GameDev-focused fork of the Plasticity Blender bridge. Builds on upstream and adds workflow tools for fast real-time asset prep (topology/edge control, UV workflow, and export-oriented utilities).
+## GameDev-focused fork of the Plasticity Blender Bridge.
+
+Unofficial fork that regularly incorporates the latest improvements from the official Plasticity Blender add-on, and adds workflow tools / improvements for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
 
 ## Upstreamed into the official add-on workflow
 
