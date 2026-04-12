@@ -178,6 +178,7 @@ class SceneHandler:
         # NOTE: it turns out that caching this is unsafe with undo/redo; call __prepare() before every update
         self.files = {}
         self.list_filter_ids = None
+        self.list_only_new = False
         self._status_min_interval = 1.0
         self._last_status_time = 0.0
         self._last_status_text = None
@@ -215,6 +216,61 @@ class SceneHandler:
             except Exception:
                 continue
         return ids
+
+    def __filter_list_items_only_new(self, filename, add_items, update_items):
+        ordered_items = list(add_items) + list(update_items)
+        if not ordered_items:
+            return [], set()
+
+        existing_item_ids = set(
+            self.files[filename][PlasticityIdUniquenessScope.ITEM].keys()
+        )
+        existing_group_ids = set(
+            self.files[filename][PlasticityIdUniquenessScope.GROUP].keys()
+        )
+
+        group_items = {}
+        for item in ordered_items:
+            if item.get("type") != ObjectType.GROUP.value:
+                continue
+            plasticity_id = item.get("id")
+            if plasticity_id is None:
+                continue
+            group_items[plasticity_id] = item
+
+        new_mesh_ids = set()
+        required_group_ids = set()
+        mesh_types = {ObjectType.SOLID.value, ObjectType.SHEET.value}
+        for item in ordered_items:
+            if item.get("type") not in mesh_types:
+                continue
+            plasticity_id = item.get("id")
+            if plasticity_id is None or plasticity_id in existing_item_ids:
+                continue
+
+            new_mesh_ids.add(plasticity_id)
+            parent_id = item.get("parent_id", 0)
+            while parent_id:
+                if parent_id in existing_group_ids or parent_id in required_group_ids:
+                    break
+                parent_item = group_items.get(parent_id)
+                if not parent_item:
+                    break
+                required_group_ids.add(parent_id)
+                parent_id = parent_item.get("parent_id", 0)
+
+        filtered_items = []
+        for item in ordered_items:
+            object_type = item.get("type")
+            plasticity_id = item.get("id")
+            if object_type == ObjectType.GROUP.value:
+                if plasticity_id in required_group_ids:
+                    filtered_items.append(item)
+            elif object_type in mesh_types:
+                if plasticity_id in new_mesh_ids:
+                    filtered_items.append(item)
+
+        return filtered_items, new_mesh_ids
 
     def __pivot_clear_runtime(self):
         self._pivot_objects = {}
@@ -977,92 +1033,111 @@ class SceneHandler:
 
     def on_list(self, message):
         bpy.context.window_manager.plasticity_busy = False
-        filename = message["filename"]
-        version = message["version"]
+        try:
+            filename = message["filename"]
+            version = message["version"]
 
-        self.report({'INFO'}, "Updating " + filename +
-                    " to version " + str(version))
-        bpy.ops.ed.undo_push(message="Plasticity update")
+            self.report({'INFO'}, "Updating " + filename +
+                        " to version " + str(version))
+            bpy.ops.ed.undo_push(message="Plasticity update")
 
-        inbox_collection = self.__prepare(filename)
+            inbox_collection = self.__prepare(filename)
 
-        filter_ids = self.list_filter_ids
-        selected_only = bool(filter_ids)
-        if filter_ids:
-            filter_ids = set(filter_ids)
+            filter_ids = self.list_filter_ids
+            selected_only = bool(filter_ids)
+            if filter_ids:
+                filter_ids = set(filter_ids)
 
-        add_items = message.get("add", [])
-        update_items = message.get("update", [])
+            add_items = message.get("add", [])
+            update_items = message.get("update", [])
 
-        all_items = set()
-        all_groups = set()
-        for item in add_items + update_items:
-            if item["type"] == ObjectType.GROUP.value:
-                all_groups.add(item["id"])
+            if self.list_only_new:
+                filtered_items, changed_ids = self.__filter_list_items_only_new(
+                    filename,
+                    add_items,
+                    update_items,
+                )
+                try:
+                    from . import operators
+                    operators.note_live_link_update(filename, changed_ids=changed_ids)
+                except Exception:
+                    pass
+
+                if filtered_items:
+                    self.__replace_objects(filename, inbox_collection,
+                                           version, filtered_items)
             else:
-                all_items.add(item["id"])
+                all_items = set()
+                all_groups = set()
+                for item in add_items + update_items:
+                    if item["type"] == ObjectType.GROUP.value:
+                        all_groups.add(item["id"])
+                    else:
+                        all_items.add(item["id"])
 
-        if selected_only:
-            filtered_add = [
-                item for item in add_items
-                if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
-            ]
-            filtered_update = [
-                item for item in update_items
-                if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
-            ]
-        else:
-            filtered_add = add_items
-            filtered_update = update_items
+                if selected_only:
+                    filtered_add = [
+                        item for item in add_items
+                        if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
+                    ]
+                    filtered_update = [
+                        item for item in update_items
+                        if item["type"] == ObjectType.GROUP.value or item["id"] in filter_ids
+                    ]
+                else:
+                    filtered_add = add_items
+                    filtered_update = update_items
 
-        changed_ids = self.__mesh_item_ids(filtered_add)
-        changed_ids.update(self.__mesh_item_ids(filtered_update))
-        try:
-            from . import operators
-            operators.note_live_link_update(filename, changed_ids=changed_ids)
-        except Exception:
-            pass
+                changed_ids = self.__mesh_item_ids(filtered_add)
+                changed_ids.update(self.__mesh_item_ids(filtered_update))
+                try:
+                    from . import operators
+                    operators.note_live_link_update(filename, changed_ids=changed_ids)
+                except Exception:
+                    pass
 
-        if filtered_add:
-            self.__replace_objects(filename, inbox_collection,
-                                   version, filtered_add)
-        if filtered_update:
-            self.__replace_objects(filename, inbox_collection,
-                                   version, filtered_update)
+                if filtered_add:
+                    self.__replace_objects(filename, inbox_collection,
+                                           version, filtered_add)
+                if filtered_update:
+                    self.__replace_objects(filename, inbox_collection,
+                                           version, filtered_update)
 
-        if selected_only:
-            for plasticity_id in filter_ids:
-                if plasticity_id not in all_items:
-                    self.__delete_object(filename, version, plasticity_id)
-        else:
-            to_delete = []
-            for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.ITEM].items():
-                if plasticity_id not in all_items:
-                    to_delete.append(plasticity_id)
-            for plasticity_id in to_delete:
-                self.__delete_object(filename, version, plasticity_id)
+                if selected_only:
+                    for plasticity_id in filter_ids:
+                        if plasticity_id not in all_items:
+                            self.__delete_object(filename, version, plasticity_id)
+                else:
+                    to_delete = []
+                    for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.ITEM].items():
+                        if plasticity_id not in all_items:
+                            to_delete.append(plasticity_id)
+                    for plasticity_id in to_delete:
+                        self.__delete_object(filename, version, plasticity_id)
 
-            to_delete = []
-            for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.GROUP].items():
-                if plasticity_id not in all_groups:
-                    to_delete.append(plasticity_id)
-            for plasticity_id in to_delete:
-                self.__delete_group(filename, version, plasticity_id)
+                    to_delete = []
+                    for plasticity_id, obj in self.files[filename][PlasticityIdUniquenessScope.GROUP].items():
+                        if plasticity_id not in all_groups:
+                            to_delete.append(plasticity_id)
+                    for plasticity_id in to_delete:
+                        self.__delete_group(filename, version, plasticity_id)
 
-        try:
-            from . import operators
-            operators.reset_live_uv_runtime_state(scene=bpy.context.scene, filename=filename)
-            operators.apply_live_paint_faces(
-                scene=bpy.context.scene,
-                filename=filename,
-                force=True,
-                target_ids=changed_ids,
-            )
-        except Exception:
-            pass
+            try:
+                from . import operators
+                operators.reset_live_uv_runtime_state(scene=bpy.context.scene, filename=filename)
+                operators.apply_live_paint_faces(
+                    scene=bpy.context.scene,
+                    filename=filename,
+                    force=True,
+                    target_ids=changed_ids,
+                )
+            except Exception:
+                pass
 
-        bpy.ops.ed.undo_push(message="/Plasticity update")
-        self.list_filter_ids = None
+            bpy.ops.ed.undo_push(message="/Plasticity update")
+        finally:
+            self.list_filter_ids = None
+            self.list_only_new = False
 
     def on_refacet(self, filename, version, plasticity_ids, versions, faces, positions, indices, normals, groups, face_ids):
         bpy.context.window_manager.plasticity_busy = False
@@ -1140,11 +1215,15 @@ class SceneHandler:
     def on_connect(self):
         bpy.context.window_manager.plasticity_busy = False
         self.files = {}
+        self.list_filter_ids = None
+        self.list_only_new = False
         self.bootstrap_pivot_state(getattr(bpy.context, "scene", None))
 
     def on_disconnect(self):
         bpy.context.window_manager.plasticity_busy = False
         self.files = {}
+        self.list_filter_ids = None
+        self.list_only_new = False
 
     def report(self, level, message):
         print(message)

@@ -2,7 +2,7 @@ bl_info = {
     "name": "Plasticity Blender Addon Gamedev",
     "description": "Game development focused fork of the Plasticity Blender add-on.",
     "author": "Nick Kallen, User129863",
-    "version": (1, 3, 0),
+    "version": (1, 3, 1),
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Plasticity",
     "category": "Object",
@@ -758,6 +758,7 @@ def register():
     )
     bpy.types.Scene.prop_plasticity_list_only_visible = bpy.props.BoolProperty(name="List only visible", default=False)
     bpy.types.Scene.prop_plasticity_list_only_selected = bpy.props.BoolProperty(name="List only selected", default=False)
+    bpy.types.Scene.prop_plasticity_list_only_new = bpy.props.BoolProperty(name="List only new", default=False)
     bpy.types.Scene.prop_plasticity_facet_tri_or_ngon = bpy.props.EnumProperty(
         items=[
             ("TRI", "Tri", "Triangles only"),
@@ -1043,6 +1044,7 @@ def register():
     bpy.types.Scene.prop_plasticity_pin_refresh = bpy.props.BoolProperty(name="Pin Refresh", default=False)
     bpy.types.Scene.prop_plasticity_pin_only_visible = bpy.props.BoolProperty(name="Pin Only Visible", default=False)
     bpy.types.Scene.prop_plasticity_pin_only_selected = bpy.props.BoolProperty(name="Pin Only Selected", default=False)
+    bpy.types.Scene.prop_plasticity_pin_only_new = bpy.props.BoolProperty(name="Pin Only New", default=False)
     bpy.types.Scene.prop_plasticity_pin_scale = bpy.props.BoolProperty(name="Pin Scale", default=False)
     bpy.types.Scene.prop_plasticity_pin_refacet = bpy.props.BoolProperty(name="Pin Refacet", default=True)
     bpy.types.Scene.prop_plasticity_pin_live_refacet_only_selected = bpy.props.BoolProperty(name="Pin Live Refacet Only Selected", default=False)
@@ -1355,6 +1357,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_live_expand_overlay_color
     del bpy.types.Scene.prop_plasticity_list_only_visible
     del bpy.types.Scene.prop_plasticity_list_only_selected
+    del bpy.types.Scene.prop_plasticity_list_only_new
     del bpy.types.Scene.prop_plasticity_ui_show_advanced_facet
     del bpy.types.Scene.prop_plasticity_ui_show_refacet
     del bpy.types.Scene.prop_plasticity_live_refacet
@@ -1378,6 +1381,7 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_pin_refresh
     del bpy.types.Scene.prop_plasticity_pin_only_visible
     del bpy.types.Scene.prop_plasticity_pin_only_selected
+    del bpy.types.Scene.prop_plasticity_pin_only_new
     del bpy.types.Scene.prop_plasticity_pin_scale
     del bpy.types.Scene.prop_plasticity_pin_refacet
     del bpy.types.Scene.prop_plasticity_pin_live_refacet_only_selected

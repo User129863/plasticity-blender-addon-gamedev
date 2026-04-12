@@ -56,23 +56,37 @@ class ListButton(bpy.types.Operator):
         return plasticity_client.connected
 
     def execute(self, context):
-        only_visible = context.scene.prop_plasticity_list_only_visible
-        if context.scene.prop_plasticity_list_only_selected:
-            selected_ids = [
-                obj["plasticity_id"]
-                for obj in context.selected_objects
-                if obj.type == 'MESH' and "plasticity_id" in obj.keys()
-            ]
-            if selected_ids:
-                plasticity_client.handler.list_filter_ids = set(selected_ids)
+        scene = context.scene
+        only_visible = scene.prop_plasticity_list_only_visible
+        only_new = scene.prop_plasticity_list_only_new
+
+        context.window_manager.plasticity_busy = True
+        try:
+            plasticity_client.handler.list_only_new = bool(only_new)
+            if only_new:
+                plasticity_client.handler.list_filter_ids = None
+            elif scene.prop_plasticity_list_only_selected:
+                selected_ids = [
+                    obj["plasticity_id"]
+                    for obj in context.selected_objects
+                    if obj.type == 'MESH' and "plasticity_id" in obj.keys()
+                ]
+                if selected_ids:
+                    plasticity_client.handler.list_filter_ids = set(selected_ids)
+                else:
+                    plasticity_client.handler.list_filter_ids = set()
             else:
-                plasticity_client.handler.list_filter_ids = set()
-        else:
+                plasticity_client.handler.list_filter_ids = None
+            if only_visible:
+                plasticity_client.list_visible()
+            else:
+                plasticity_client.list_all()
+        except Exception as exc:
+            context.window_manager.plasticity_busy = False
             plasticity_client.handler.list_filter_ids = None
-        if only_visible:
-            plasticity_client.list_visible()
-        else:
-            plasticity_client.list_all()
+            plasticity_client.handler.list_only_new = False
+            self.report({'ERROR'}, f"Refresh failed: {exc}")
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
@@ -283,6 +297,7 @@ class PlasticityPanel(bpy.types.Panel):
                 "prop_plasticity_pin_refresh",
                 "prop_plasticity_pin_only_visible",
                 "prop_plasticity_pin_only_selected",
+                "prop_plasticity_pin_only_new",
                 "prop_plasticity_pin_scale",
                 "prop_plasticity_pin_refacet",
                 "prop_plasticity_pin_live_refacet_only_selected",
@@ -374,10 +389,18 @@ class PlasticityPanel(bpy.types.Panel):
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_visible"), emboss=False)
                 if scene.prop_plasticity_pin_only_selected:
                     row = pin_col.row(align=True)
-                    row.prop(scene, "prop_plasticity_list_only_selected",
-                             text="Only selected objects in Blender")
+                    selected_row = row.row(align=True)
+                    selected_row.enabled = not scene.prop_plasticity_list_only_new
+                    selected_row.prop(scene, "prop_plasticity_list_only_selected",
+                                      text="Only selected objects in Blender")
                     row.prop(scene, "prop_plasticity_pin_only_selected",
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_selected"), emboss=False)
+                if scene.prop_plasticity_pin_only_new:
+                    row = pin_col.row(align=True)
+                    row.prop(scene, "prop_plasticity_list_only_new",
+                             text="Only new objects in Plasticity")
+                    row.prop(scene, "prop_plasticity_pin_only_new",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_new"), emboss=False)
                 if scene.prop_plasticity_pin_scale:
                     row = pin_col.row(align=True)
                     row.prop(scene, "prop_plasticity_unit_scale",
@@ -720,10 +743,17 @@ class PlasticityPanel(bpy.types.Panel):
                 row.prop(scene, "prop_plasticity_pin_only_visible",
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_visible"), emboss=False)
                 row = box.row(align=True)
-                row.prop(scene, "prop_plasticity_list_only_selected",
-                         text="Only selected objects in Blender")
+                selected_row = row.row(align=True)
+                selected_row.enabled = not scene.prop_plasticity_list_only_new
+                selected_row.prop(scene, "prop_plasticity_list_only_selected",
+                                  text="Only selected objects in Blender")
                 row.prop(scene, "prop_plasticity_pin_only_selected",
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_selected"), emboss=False)
+                row = box.row(align=True)
+                row.prop(scene, "prop_plasticity_list_only_new",
+                         text="Only new objects in Plasticity")
+                row.prop(scene, "prop_plasticity_pin_only_new",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_only_new"), emboss=False)
                 row = box.row(align=True)
                 row.prop(scene, "prop_plasticity_unit_scale",
                          text="Scale", slider=True)
