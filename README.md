@@ -138,4 +138,8 @@ https://github.com/user-attachments/assets/bed96ba8-e440-4f40-ba1c-5b3c95cbf68b
 
 <img width="332" height="616" alt="image" src="https://github.com/user-attachments/assets/17993347-a8d1-4f6f-85d6-de8c33d2bd8e" />
 
+## Version 1.3.1 updates
+
+- Added: Only new objects in Plasticity option to Refresh.
+- When enabled, Refresh imports only new Plasticity objects that are not already in the Blender scene, preventing existing imported objects from being refreshed.
 
