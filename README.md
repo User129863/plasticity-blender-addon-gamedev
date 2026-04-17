@@ -152,11 +152,5 @@ https://github.com/user-attachments/assets/bed96ba8-e440-4f40-ba1c-5b3c95cbf68b
     Added: Multi-object send support. You can now select one or more objects in the Blender scene and send them to Plasticity in a single action.
     Added: Automatic loose-parts separation during send, so joined meshes with separate parts can be uploaded as separate Plasticity objects.
 
-https://github.com/user-attachments/assets/e524569c-2892-42ee-a86b-ee753772e68e
-<img width="332" height="616" alt="image" src="https://github.com/user-attachments/assets/17993347-a8d1-4f6f-85d6-de8c33d2bd8e" />
-
-https://github.com/user-attachments/assets/6e29f8ec-b462-414b-9091-e373f7d5f232
-<img width="332" height="616" alt="image" src="https://github.com/user-attachments/assets/6e29f8ec-b462-414b-9091-e373f7d5f232" />
-
 
 
