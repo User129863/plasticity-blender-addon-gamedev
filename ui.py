@@ -1,13 +1,261 @@
 ﻿import bpy
 import math
+import os
 
 from .__init__ import plasticity_client
 from .__init__ import load_presets
-from .client import FacetShapeType
+from .client import FacetShapeType, MessageType
 
 
 def _pin_icon(scene, prop_name):
     return "PINNED" if getattr(scene, prop_name) else "UNPINNED"
+
+
+def _is_outbox_object(obj):
+    try:
+        return any("outbox" in collection for collection in obj.users_collection)
+    except Exception:
+        return False
+
+
+def _blender_source_filename():
+    return os.path.basename(bpy.data.filepath) or "Untitled.blend"
+
+
+def _selected_send_mesh_objects(context):
+    selected_objects = list(getattr(context, "selected_objects", []) or [])
+    if not selected_objects:
+        return []
+
+    mesh_objects = []
+    for obj in selected_objects:
+        if obj is None or obj.type != 'MESH':
+            return []
+        mesh_objects.append(obj)
+    return mesh_objects
+
+
+def _collect_refacet_target_objects(context):
+    targets = []
+    if context.mode == 'EDIT_MESH':
+        edit_objects = getattr(context, "objects_in_mode", None) or []
+        for obj in edit_objects:
+            if obj and obj.type == 'MESH' and "plasticity_id" in obj.keys() and not _is_outbox_object(obj):
+                targets.append(obj)
+        if targets:
+            return targets
+
+    for obj in context.selected_objects:
+        if obj.type == 'MESH' and "plasticity_id" in obj.keys() and not _is_outbox_object(obj):
+            targets.append(obj)
+    if targets:
+        return targets
+
+    obj = context.active_object
+    if obj and obj.type == 'MESH' and "plasticity_id" in obj.keys() and not _is_outbox_object(obj):
+        return [obj]
+    return []
+
+
+def _begin_refresh_request(context, on_complete=None):
+    scene = context.scene
+    only_visible = scene.prop_plasticity_list_only_visible
+    only_new = scene.prop_plasticity_list_only_new
+
+    context.window_manager.plasticity_busy = True
+    plasticity_client.handler.list_only_new = bool(only_new)
+    if only_new:
+        plasticity_client.handler.list_filter_ids = None
+    elif scene.prop_plasticity_list_only_selected:
+        selected_ids = [
+            obj["plasticity_id"]
+            for obj in context.selected_objects
+            if obj.type == 'MESH' and "plasticity_id" in obj.keys()
+        ]
+        if selected_ids:
+            plasticity_client.handler.list_filter_ids = set(selected_ids)
+        else:
+            plasticity_client.handler.list_filter_ids = set()
+    else:
+        plasticity_client.handler.list_filter_ids = None
+
+    if only_visible:
+        plasticity_client.list_visible(on_complete)
+    else:
+        plasticity_client.list_all(on_complete)
+
+
+def _clear_pending_refresh_state():
+    bpy.context.window_manager.plasticity_busy = False
+    plasticity_client.handler.list_filter_ids = None
+    plasticity_client.handler.list_only_new = False
+    plasticity_client.on_list_complete = None
+
+
+def _move_object_to_outbox(obj, outbox_collection):
+    if outbox_collection not in obj.users_collection:
+        outbox_collection.objects.link(obj)
+    for collection in list(obj.users_collection):
+        if collection != outbox_collection:
+            collection.objects.unlink(obj)
+
+
+def _clear_sent_identity(obj):
+    for key in ("blender_pns_id", "plasticity_id", "plasticity_version"):
+        try:
+            if key in obj.keys():
+                del obj[key]
+        except Exception:
+            pass
+
+
+def _separate_object_by_loose_parts(obj, reporter=None):
+    context = bpy.context
+    view_layer = context.view_layer
+
+    try:
+        obj_type = obj.type
+    except Exception:
+        if reporter:
+            reporter.report({'ERROR'}, "Selected object is no longer available.")
+        return []
+
+    if obj_type != 'MESH':
+        return []
+
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+        obj.select_set(True)
+        view_layer.objects.active = obj
+        bpy.ops.object.mode_set(mode='EDIT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.separate(type='LOOSE')
+        bpy.ops.object.mode_set(mode='OBJECT')
+    except Exception as exc:
+        try:
+            bpy.ops.object.mode_set(mode='OBJECT')
+        except Exception:
+            pass
+        if reporter:
+            reporter.report({'ERROR'}, f"Failed to separate loose parts for '{getattr(obj, 'name', 'object')}': {exc}")
+        return []
+
+    result_objects = [
+        selected_obj
+        for selected_obj in context.selected_objects
+        if selected_obj is not None and selected_obj.type == 'MESH'
+    ]
+    if not result_objects:
+        try:
+            result_objects = [obj] if obj.name in bpy.data.objects else []
+        except Exception:
+            result_objects = []
+
+    if len(result_objects) > 1:
+        for result_obj in result_objects:
+            _clear_sent_identity(result_obj)
+
+    return result_objects
+
+
+def _apply_send_settings_to_object(obj, scene, create_subd=False):
+    if create_subd:
+        existing_subd = next(
+            (modifier for modifier in obj.modifiers if modifier.type == 'SUBSURF'),
+            None,
+        )
+        if existing_subd is None:
+            obj.modifiers.new(name="Subdivision", type='SUBSURF')
+
+    obj["pns_merge_patches"] = bool(scene.prop_plasticity_send_merge_patches)
+    obj["pns_interpolate_boundary"] = bool(scene.prop_plasticity_send_interpolate_boundary)
+
+    subsurf_modifier = next(
+        (modifier for modifier in obj.modifiers if modifier.type == 'SUBSURF'),
+        None,
+    )
+    if subsurf_modifier is not None:
+        subsurf_modifier.boundary_smooth = (
+            'ALL' if scene.prop_plasticity_send_rounded_corners else 'PRESERVE_CORNERS'
+        )
+
+
+def _send_mesh_objects_to_plasticity(objects, create_subd=False, reporter=None):
+    filename = plasticity_client.filename
+    if not filename:
+        if reporter:
+            reporter.report({'ERROR'}, "Plasticity filename is still unknown.")
+        return False
+
+    valid_objects = []
+    for obj in objects:
+        try:
+            obj_type = obj.type
+        except Exception:
+            continue
+        if obj_type != 'MESH':
+            continue
+        valid_objects.append(obj)
+
+    if not valid_objects:
+        if reporter:
+            reporter.report({'ERROR'}, "Select one or more mesh objects.")
+        return False
+
+    outbox_collection = plasticity_client.handler.ensure_outbox_for_filename(filename)
+    scene = bpy.context.scene
+    send_objects = []
+
+    for obj in valid_objects:
+        _move_object_to_outbox(obj, outbox_collection)
+        result_objects = _separate_object_by_loose_parts(obj, reporter=reporter)
+        for result_obj in result_objects:
+            if result_obj not in send_objects:
+                send_objects.append(result_obj)
+
+    if not send_objects:
+        if reporter:
+            reporter.report({'ERROR'}, "No mesh objects were available to send.")
+        return False
+
+    for obj in send_objects:
+        _apply_send_settings_to_object(obj, scene, create_subd=create_subd)
+
+    try:
+        bpy.ops.object.select_all(action='DESELECT')
+    except Exception:
+        pass
+    for obj in send_objects:
+        try:
+            obj.select_set(True)
+        except Exception:
+            pass
+    try:
+        bpy.context.view_layer.objects.active = send_objects[0]
+    except Exception:
+        pass
+
+    bpy.context.window_manager.plasticity_busy = True
+    try:
+        outbox_data = plasticity_client.handler.get_outbox_data(
+            filename,
+            only_visible=False,
+            allowed_objects=send_objects,
+        )
+        if not outbox_data["groups"] and not outbox_data["items"]:
+            bpy.context.window_manager.plasticity_busy = False
+            if reporter:
+                reporter.report({'WARNING'}, "Selected objects could not be prepared for Plasticity upload.")
+            return False
+
+        plasticity_client.put_some(_blender_source_filename(), outbox_data["groups"], outbox_data["items"])
+    except Exception as exc:
+        bpy.context.window_manager.plasticity_busy = False
+        if reporter:
+            reporter.report({'ERROR'}, f"Send to Plasticity failed: {exc}")
+        return False
+
+    return True
 
 
 class ConnectButton(bpy.types.Operator):
@@ -47,7 +295,7 @@ class DisconnectButton(bpy.types.Operator):
 class ListButton(bpy.types.Operator):
     bl_idname = "wm.list"
     bl_label = "Refresh"
-    bl_description = "Refresh the Plasticity object list (respects Only visible)"
+    bl_description = "Refresh the Plasticity object list and sync Outbox to Plasticity"
 
     @classmethod
     def poll(cls, context):
@@ -56,37 +304,68 @@ class ListButton(bpy.types.Operator):
         return plasticity_client.connected
 
     def execute(self, context):
-        scene = context.scene
-        only_visible = scene.prop_plasticity_list_only_visible
-        only_new = scene.prop_plasticity_list_only_new
+        only_visible = context.scene.prop_plasticity_list_only_visible
 
-        context.window_manager.plasticity_busy = True
+        def on_complete(filename):
+            if not plasticity_client.supports(MessageType.PUT_SOME_1):
+                return
+
+            outbox_data = plasticity_client.handler.get_outbox_data(filename, only_visible)
+            if not outbox_data["groups"] and not outbox_data["items"]:
+                return
+
+            bpy.context.window_manager.plasticity_busy = True
+            plasticity_client.put_some(_blender_source_filename(), outbox_data["groups"], outbox_data["items"])
+
         try:
-            plasticity_client.handler.list_only_new = bool(only_new)
-            if only_new:
-                plasticity_client.handler.list_filter_ids = None
-            elif scene.prop_plasticity_list_only_selected:
-                selected_ids = [
-                    obj["plasticity_id"]
-                    for obj in context.selected_objects
-                    if obj.type == 'MESH' and "plasticity_id" in obj.keys()
-                ]
-                if selected_ids:
-                    plasticity_client.handler.list_filter_ids = set(selected_ids)
-                else:
-                    plasticity_client.handler.list_filter_ids = set()
-            else:
-                plasticity_client.handler.list_filter_ids = None
-            if only_visible:
-                plasticity_client.list_visible()
-            else:
-                plasticity_client.list_all()
+            _begin_refresh_request(context, on_complete=on_complete)
         except Exception as exc:
-            context.window_manager.plasticity_busy = False
-            plasticity_client.handler.list_filter_ids = None
-            plasticity_client.handler.list_only_new = False
+            _clear_pending_refresh_state()
             self.report({'ERROR'}, f"Refresh failed: {exc}")
             return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class SendToPlasticityButton(bpy.types.Operator):
+    bl_idname = "wm.send_to_plasticity"
+    bl_label = "Send to Plasticity"
+    bl_description = "Move selected meshes to Plasticity Outbox, split loose parts, and upload them"
+
+    @classmethod
+    def poll(cls, context):
+        if getattr(context, "mode", None) != 'OBJECT':
+            return False
+        if context.window_manager.plasticity_busy:
+            return False
+        if not plasticity_client.connected:
+            return False
+        if not plasticity_client.supports(MessageType.PUT_SOME_1):
+            return False
+        return bool(_selected_send_mesh_objects(context))
+
+    def execute(self, context):
+        objects = _selected_send_mesh_objects(context)
+        if not objects:
+            self.report({'ERROR'}, "Select one or more mesh objects.")
+            return {'CANCELLED'}
+
+        create_subd = bool(context.scene.prop_plasticity_send_create_subd)
+
+        if plasticity_client.filename:
+            if not _send_mesh_objects_to_plasticity(objects, create_subd=create_subd, reporter=self):
+                return {'CANCELLED'}
+            return {'FINISHED'}
+
+        def on_complete(filename):
+            _send_mesh_objects_to_plasticity(objects, create_subd=create_subd, reporter=self)
+
+        try:
+            _begin_refresh_request(context, on_complete=on_complete)
+        except Exception as exc:
+            _clear_pending_refresh_state()
+            self.report({'ERROR'}, f"Unable to query Plasticity filename before sending: {exc}")
+            return {'CANCELLED'}
+
         return {'FINISHED'}
 
 
@@ -129,7 +408,7 @@ class RefacetButton(bpy.types.Operator):
         if context.window_manager.plasticity_busy:
             return False
 
-        return any("plasticity_id" in obj.keys() for obj in context.selected_objects)
+        return bool(_collect_refacet_target_objects(context))
 
     def execute(self, context):
 
@@ -215,7 +494,7 @@ class RefacetButton(bpy.types.Operator):
 
         plasticity_ids_by_filename = {}
         
-        for obj in context.selected_objects:
+        for obj in _collect_refacet_target_objects(context):
             if "plasticity_filename" in obj.keys():
                 if obj["plasticity_filename"] not in plasticity_ids_by_filename.keys():
                     plasticity_ids_by_filename[obj["plasticity_filename"]] = []
@@ -299,6 +578,11 @@ class PlasticityPanel(bpy.types.Panel):
                 "prop_plasticity_pin_only_selected",
                 "prop_plasticity_pin_only_new",
                 "prop_plasticity_pin_scale",
+                "prop_plasticity_pin_send_to_plasticity",
+                "prop_plasticity_pin_send_create_subd",
+                "prop_plasticity_pin_send_rounded_corners",
+                "prop_plasticity_pin_send_merge_patches",
+                "prop_plasticity_pin_send_interpolate_boundary",
                 "prop_plasticity_pin_refacet",
                 "prop_plasticity_pin_live_refacet_only_selected",
                 "prop_plasticity_pin_live_refacet",
@@ -407,6 +691,35 @@ class PlasticityPanel(bpy.types.Panel):
                              text="Scale", slider=True)
                     row.prop(scene, "prop_plasticity_pin_scale",
                              text="", icon=_pin_icon(scene, "prop_plasticity_pin_scale"), emboss=False)
+                if scene.prop_plasticity_pin_send_to_plasticity:
+                    row = pin_col.row(align=True)
+                    row.operator("wm.send_to_plasticity", text="Send to Plasticity")
+                    row.prop(scene, "prop_plasticity_pin_send_to_plasticity",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_to_plasticity"), emboss=False)
+                if scene.prop_plasticity_pin_send_rounded_corners:
+                    row = pin_col.row(align=True)
+                    row.prop(scene, "prop_plasticity_send_rounded_corners",
+                             text="Rounded corners")
+                    row.prop(scene, "prop_plasticity_pin_send_rounded_corners",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_rounded_corners"), emboss=False)
+                if scene.prop_plasticity_pin_send_merge_patches:
+                    row = pin_col.row(align=True)
+                    row.prop(scene, "prop_plasticity_send_merge_patches",
+                             text="Merge patches")
+                    row.prop(scene, "prop_plasticity_pin_send_merge_patches",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_merge_patches"), emboss=False)
+                if scene.prop_plasticity_pin_send_interpolate_boundary:
+                    row = pin_col.row(align=True)
+                    row.prop(scene, "prop_plasticity_send_interpolate_boundary",
+                             text="Interpolate boundary exactly")
+                    row.prop(scene, "prop_plasticity_pin_send_interpolate_boundary",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_interpolate_boundary"), emboss=False)
+                if scene.prop_plasticity_pin_send_create_subd:
+                    row = pin_col.row(align=True)
+                    row.prop(scene, "prop_plasticity_send_create_subd",
+                             text="Auto-Create Sub D modifier")
+                    row.prop(scene, "prop_plasticity_pin_send_create_subd",
+                             text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_create_subd"), emboss=False)
                 if scene.prop_plasticity_pin_refacet:
                     row = pin_col.row(align=True)
                     row.operator("wm.refacet", text="Refacet")
@@ -759,6 +1072,31 @@ class PlasticityPanel(bpy.types.Panel):
                          text="Scale", slider=True)
                 row.prop(scene, "prop_plasticity_pin_scale",
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_scale"), emboss=False)
+                send_box = layout.box()
+                row = send_box.row(align=True)
+                row.operator("wm.send_to_plasticity", text="Send to Plasticity")
+                row.prop(scene, "prop_plasticity_pin_send_to_plasticity",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_to_plasticity"), emboss=False)
+                row = send_box.row(align=True)
+                row.prop(scene, "prop_plasticity_send_rounded_corners",
+                         text="Rounded corners")
+                row.prop(scene, "prop_plasticity_pin_send_rounded_corners",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_rounded_corners"), emboss=False)
+                row = send_box.row(align=True)
+                row.prop(scene, "prop_plasticity_send_merge_patches",
+                         text="Merge patches")
+                row.prop(scene, "prop_plasticity_pin_send_merge_patches",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_merge_patches"), emboss=False)
+                row = send_box.row(align=True)
+                row.prop(scene, "prop_plasticity_send_interpolate_boundary",
+                         text="Interpolate boundary exactly")
+                row.prop(scene, "prop_plasticity_pin_send_interpolate_boundary",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_interpolate_boundary"), emboss=False)
+                row = send_box.row(align=True)
+                row.prop(scene, "prop_plasticity_send_create_subd",
+                         text="Auto-Create Sub D modifier")
+                row.prop(scene, "prop_plasticity_pin_send_create_subd",
+                         text="", icon=_pin_icon(scene, "prop_plasticity_pin_send_create_subd"), emboss=False)
 
             elif active_tab == "REFACET":
                 box = layout.box()
@@ -767,7 +1105,7 @@ class PlasticityPanel(bpy.types.Panel):
                 row.operator("wm.refacet", text="Refacet")
                 row.prop(scene, "prop_plasticity_pin_refacet",
                          text="", icon=_pin_icon(scene, "prop_plasticity_pin_refacet"), emboss=False)
-                if context.mode == 'OBJECT':
+                if context.mode in {'OBJECT', 'EDIT_MESH'}:
                     row = col.row(align=True)
                     row.prop(scene, "prop_plasticity_live_refacet_only_selected", text="Only Selected")
                     row.prop(scene, "prop_plasticity_pin_live_refacet_only_selected",

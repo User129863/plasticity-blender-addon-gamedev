@@ -3756,6 +3756,13 @@ def _coerce_plasticity_id_set(values):
     return coerced
 
 
+def _is_outbox_object(obj):
+    try:
+        return any("outbox" in collection for collection in obj.users_collection)
+    except Exception:
+        return False
+
+
 def _live_link_pending_targets_snapshot():
     if not _LIVE_REFACET_LIVELINK_PENDING_TARGETS:
         return tuple()
@@ -3850,9 +3857,30 @@ def stop_live_refacet_timer():
 def _selected_plasticity_targets(context):
     if context is None:
         return tuple()
+    if context.mode == 'EDIT_MESH':
+        edit_objects = getattr(context, "objects_in_mode", None) or []
+        selected = []
+        for obj in edit_objects:
+            if obj.type != 'MESH':
+                continue
+            if _is_outbox_object(obj):
+                continue
+            if "plasticity_id" not in obj.keys():
+                continue
+            filename = obj.get("plasticity_filename")
+            plasticity_id = obj.get("plasticity_id")
+            if filename is None or plasticity_id is None:
+                continue
+            selected.append((filename, int(plasticity_id)))
+        if selected:
+            selected.sort()
+            return tuple(selected)
+
     selected = []
     for obj in context.selected_objects:
         if obj.type != 'MESH':
+            continue
+        if _is_outbox_object(obj):
             continue
         if "plasticity_id" not in obj.keys():
             continue
@@ -3871,6 +3899,8 @@ def _scene_plasticity_targets(scene):
     targets = []
     for obj in scene.objects:
         if obj.type != 'MESH':
+            continue
+        if _is_outbox_object(obj):
             continue
         if "plasticity_id" not in obj.keys():
             continue
@@ -3909,6 +3939,8 @@ def _resolve_target_objects(context, selected_targets):
     for obj in object_iter:
         if obj.type != 'MESH':
             continue
+        if _is_outbox_object(obj):
+            continue
         filename = obj.get("plasticity_filename")
         plasticity_id = obj.get("plasticity_id")
         if filename is None or plasticity_id is None:
@@ -3931,9 +3963,15 @@ def _run_refacet_with_target_override(context, selected_targets):
     if view_layer is None:
         return {'CANCELLED'}
 
+    previous_mode = context.mode
     previous_active = view_layer.objects.active
     previous_selection = list(context.selected_objects)
     try:
+        if previous_mode != 'OBJECT':
+            if previous_active is None:
+                view_layer.objects.active = target_objects[0]
+            bpy.ops.object.mode_set(mode='OBJECT')
+
         for obj in previous_selection:
             try:
                 obj.select_set(False)
@@ -3973,6 +4011,11 @@ def _run_refacet_with_target_override(context, selected_targets):
             view_layer.objects.active = previous_active
         except Exception:
             pass
+        if previous_mode == 'EDIT_MESH' and previous_active and previous_active.type == 'MESH':
+            try:
+                bpy.ops.object.mode_set(mode='EDIT')
+            except Exception:
+                pass
 
 
 def _build_refacet_settings_signature(context):
@@ -4060,7 +4103,7 @@ def _live_refacet_timer():
         return None
 
     context = bpy.context
-    if context.mode != 'OBJECT':
+    if context.mode not in {'OBJECT', 'EDIT_MESH'}:
         if getattr(scene, "prop_plasticity_live_refacet", False):
             scene.prop_plasticity_live_refacet = False
         _LIVE_REFACET_TIMER_RUNNING = False

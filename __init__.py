@@ -2,7 +2,7 @@ bl_info = {
     "name": "Plasticity Blender Addon Gamedev",
     "description": "Game development focused fork of the Plasticity Blender add-on.",
     "author": "Nick Kallen, User129863",
-    "version": (1, 3, 1),
+    "version": (1, 3, 2),
     "blender": (4, 3, 0),
     "location": "View3D > Sidebar > Plasticity",
     "category": "Object",
@@ -335,7 +335,7 @@ def update_live_refacet(self, context):
     if not self.prop_plasticity_live_refacet:
         operators.stop_live_refacet_timer()
         return
-    if context is None or context.mode != 'OBJECT':
+    if context is None or context.mode not in {'OBJECT', 'EDIT_MESH'}:
         self.prop_plasticity_live_refacet = False
         operators.stop_live_refacet_timer()
         return
@@ -695,6 +695,7 @@ def register():
     bpy.utils.register_class(ui.ConnectButton)
     bpy.utils.register_class(ui.DisconnectButton)
     bpy.utils.register_class(ui.ListButton)
+    bpy.utils.register_class(ui.SendToPlasticityButton)
     bpy.utils.register_class(ui.SubscribeAllButton)
     bpy.utils.register_class(ui.UnsubscribeAllButton)
     bpy.utils.register_class(ui.RefacetButton)
@@ -759,6 +760,22 @@ def register():
     bpy.types.Scene.prop_plasticity_list_only_visible = bpy.props.BoolProperty(name="List only visible", default=False)
     bpy.types.Scene.prop_plasticity_list_only_selected = bpy.props.BoolProperty(name="List only selected", default=False)
     bpy.types.Scene.prop_plasticity_list_only_new = bpy.props.BoolProperty(name="List only new", default=False)
+    bpy.types.Scene.prop_plasticity_send_create_subd = bpy.props.BoolProperty(
+        name="Auto-Create Sub D modifier",
+        default=True,
+    )
+    bpy.types.Scene.prop_plasticity_send_rounded_corners = bpy.props.BoolProperty(
+        name="Rounded corners",
+        default=False,
+    )
+    bpy.types.Scene.prop_plasticity_send_merge_patches = bpy.props.BoolProperty(
+        name="Merge patches",
+        default=True,
+    )
+    bpy.types.Scene.prop_plasticity_send_interpolate_boundary = bpy.props.BoolProperty(
+        name="Interpolate boundary exactly",
+        default=False,
+    )
     bpy.types.Scene.prop_plasticity_facet_tri_or_ngon = bpy.props.EnumProperty(
         items=[
             ("TRI", "Tri", "Triangles only"),
@@ -1046,6 +1063,11 @@ def register():
     bpy.types.Scene.prop_plasticity_pin_only_selected = bpy.props.BoolProperty(name="Pin Only Selected", default=False)
     bpy.types.Scene.prop_plasticity_pin_only_new = bpy.props.BoolProperty(name="Pin Only New", default=False)
     bpy.types.Scene.prop_plasticity_pin_scale = bpy.props.BoolProperty(name="Pin Scale", default=False)
+    bpy.types.Scene.prop_plasticity_pin_send_to_plasticity = bpy.props.BoolProperty(name="Pin Send to Plasticity", default=False)
+    bpy.types.Scene.prop_plasticity_pin_send_create_subd = bpy.props.BoolProperty(name="Pin Send Create Sub-D", default=False)
+    bpy.types.Scene.prop_plasticity_pin_send_rounded_corners = bpy.props.BoolProperty(name="Pin Rounded corners", default=False)
+    bpy.types.Scene.prop_plasticity_pin_send_merge_patches = bpy.props.BoolProperty(name="Pin Merge patches", default=False)
+    bpy.types.Scene.prop_plasticity_pin_send_interpolate_boundary = bpy.props.BoolProperty(name="Pin Interpolate boundary exactly", default=False)
     bpy.types.Scene.prop_plasticity_pin_refacet = bpy.props.BoolProperty(name="Pin Refacet", default=True)
     bpy.types.Scene.prop_plasticity_pin_live_refacet_only_selected = bpy.props.BoolProperty(name="Pin Live Refacet Only Selected", default=False)
     bpy.types.Scene.prop_plasticity_pin_live_refacet = bpy.props.BoolProperty(name="Pin Live Refacet Mode", default=False)
@@ -1273,6 +1295,7 @@ def unregister():
     bpy.utils.unregister_class(ui.DisconnectButton)
     bpy.utils.unregister_class(ui.ConnectButton)
     bpy.utils.unregister_class(ui.ListButton)
+    bpy.utils.unregister_class(ui.SendToPlasticityButton)
     bpy.utils.unregister_class(ui.SubscribeAllButton)
     bpy.utils.unregister_class(ui.UnsubscribeAllButton)
     bpy.utils.unregister_class(ui.RefacetButton)
@@ -1358,6 +1381,10 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_list_only_visible
     del bpy.types.Scene.prop_plasticity_list_only_selected
     del bpy.types.Scene.prop_plasticity_list_only_new
+    del bpy.types.Scene.prop_plasticity_send_create_subd
+    del bpy.types.Scene.prop_plasticity_send_rounded_corners
+    del bpy.types.Scene.prop_plasticity_send_merge_patches
+    del bpy.types.Scene.prop_plasticity_send_interpolate_boundary
     del bpy.types.Scene.prop_plasticity_ui_show_advanced_facet
     del bpy.types.Scene.prop_plasticity_ui_show_refacet
     del bpy.types.Scene.prop_plasticity_live_refacet
@@ -1383,6 +1410,11 @@ def unregister():
     del bpy.types.Scene.prop_plasticity_pin_only_selected
     del bpy.types.Scene.prop_plasticity_pin_only_new
     del bpy.types.Scene.prop_plasticity_pin_scale
+    del bpy.types.Scene.prop_plasticity_pin_send_to_plasticity
+    del bpy.types.Scene.prop_plasticity_pin_send_create_subd
+    del bpy.types.Scene.prop_plasticity_pin_send_rounded_corners
+    del bpy.types.Scene.prop_plasticity_pin_send_merge_patches
+    del bpy.types.Scene.prop_plasticity_pin_send_interpolate_boundary
     del bpy.types.Scene.prop_plasticity_pin_refacet
     del bpy.types.Scene.prop_plasticity_pin_live_refacet_only_selected
     del bpy.types.Scene.prop_plasticity_pin_live_refacet
