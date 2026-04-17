@@ -143,3 +143,18 @@ https://github.com/user-attachments/assets/bed96ba8-e440-4f40-ba1c-5b3c95cbf68b
 - Added: Only new objects in Plasticity option to Refresh.
 - When enabled, Refresh imports only new Plasticity objects that are not already in the Blender scene, preventing existing imported objects from being refreshed.
 
+- Version 1.3.2 updates
+
+    Added: Support for the Blender-to-Plasticity PolySpline workflow. New Send to Plasticity button in the Main tab.
+
+    Note: Meshes sent through this workflow must have a Sub-D modifier.
+    Added: Auto-Create Sub D modifier option before sending mesh to Plasticity.
+    Added: Exposed PolySpline options in Blender: Rounded corners, Merge patches, and Interpolate boundary exactly. Same options as when importing OBJ from Plasticity.
+    Added: Multi-object send support. You can now select one or more objects in the Blender scene and send them to Plasticity in a single action.
+    Added: Automatic loose-parts separation during send, so joined meshes with separate parts can be uploaded as separate Plasticity objects.
+
+https://github.com/user-attachments/assets/e524569c-2892-42ee-a86b-ee753772e68e
+https://github.com/user-attachments/assets/6e29f8ec-b462-414b-9091-e373f7d5f232
+
+
+
