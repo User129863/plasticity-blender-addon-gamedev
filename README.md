@@ -123,7 +123,7 @@ https://github.com/user-attachments/assets/2dd4efb0-cb47-4379-9c01-1dccc4edc275
 
 ## Version 1.2.4 updates
 
-- Added a new FBX option in Preferences: users with the Better FBX add-on can select it for both FBX import and export.
+- Added a new FBX option in Preferences: users who own the Better FBX Importer & Exporter for Blender can select it for both FBX import and export. 
 - Merge Seams fixes when multiple objects are selected.
 - General bug fixes and stability improvements.
 
