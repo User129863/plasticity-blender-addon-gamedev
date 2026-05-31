@@ -15,7 +15,7 @@
   <a href="https://www.youtube.com/watch?v=2gdkzLUBxUU)">
     <img src="https://img.youtube.com/vi/2gdkzLUBxUU/hqdefault.jpg" alt="Watch on YouTube">
   </a><br>
-  Model by: <a href="https://www.youtube.com/@yn2097_">Yann Goument</a>
+  Motorcycle Model by: <a href="https://www.youtube.com/@yn2097_">Yann Goument</a>
 </p>
 
 ## GameDev-focused fork of the Plasticity Blender Bridge.
