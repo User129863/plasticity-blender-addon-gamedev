@@ -5,6 +5,10 @@
 [![License](https://img.shields.io/badge/license-MIT-0969da)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/User129863/plasticity-blender-addon-gamedev?logo=github)](https://github.com/User129863/plasticity-blender-addon-gamedev/stargazers)
 
+<a href="https://buymeacoffee.com/User129863">
+  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
+</a>
+
 # Plasticity Blender Addon Gamedev
 
 </div>
@@ -28,10 +32,6 @@ Unofficial fork that regularly incorporates the latest improvements from the off
   </a><br>
   Motorcycle Model by: <a href="https://www.youtube.com/@yn2097_">Yann Goument</a>
 </p>
-
-<a href="https://buymeacoffee.com/User129863">
-  <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
-</a>
 
 </div>
 
