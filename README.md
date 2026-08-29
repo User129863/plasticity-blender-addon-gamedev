@@ -1,11 +1,11 @@
 <div align="center">
 
-# Plasticity Blender Addon Gamedev
-
 [![Version](https://img.shields.io/badge/version-1.3.2-2ea44f)](#version-132-updates)
 [![Blender](https://img.shields.io/badge/Blender-4.3%2B-E87D0D?logo=blender&logoColor=white)](#version-12-updates)
 [![License](https://img.shields.io/badge/license-MIT-0969da)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/User129863/plasticity-blender-addon-gamedev?logo=github)](https://github.com/User129863/plasticity-blender-addon-gamedev/stargazers)
+
+# Plasticity Blender Addon Gamedev
 
 </div>
 
