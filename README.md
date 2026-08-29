@@ -1,5 +1,7 @@
 <div align="center">
 
+# Plasticity Blender Addon Gamedev
+
 [![Version](https://img.shields.io/badge/version-1.3.2-2ea44f)](#version-132-updates)
 [![Blender](https://img.shields.io/badge/Blender-4.3%2B-E87D0D?logo=blender&logoColor=white)](#version-12-updates)
 [![License](https://img.shields.io/badge/license-MIT-0969da)](LICENSE)
@@ -8,8 +10,6 @@
 <a href="https://buymeacoffee.com/User129863">
   <img src="https://cdn.buymeacoffee.com/buttons/v2/default-yellow.png" alt="Buy Me a Coffee" width="180">
 </a>
-
-# Plasticity Blender Addon Gamedev
 
 </div>
 
