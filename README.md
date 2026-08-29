@@ -1,6 +1,6 @@
 <div align="center">
 
-# plasticity-blender-addon-gamedev
+# Plasticity Blender Addon Gamedev
 
 [![Version](https://img.shields.io/badge/version-1.3.2-2ea44f)](#version-132-updates)
 [![Blender](https://img.shields.io/badge/Blender-4.3%2B-E87D0D?logo=blender&logoColor=white)](#version-12-updates)
