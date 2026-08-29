@@ -7,6 +7,14 @@
 [![License](https://img.shields.io/badge/license-MIT-0969da)](LICENSE)
 [![GitHub stars](https://img.shields.io/github/stars/User129863/plasticity-blender-addon-gamedev?logo=github)](https://github.com/User129863/plasticity-blender-addon-gamedev/stargazers)
 
+</div>
+
+## GameDev-focused fork of the Plasticity Blender Bridge.
+
+Unofficial fork that regularly incorporates the latest improvements from the official Plasticity Blender add-on, and adds workflow tools / improvements for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
+
+<div align="center">
+
 <p>
   <a href="https://www.youtube.com/watch?v=Bk0S0jZEzRM">
     <img src="https://img.youtube.com/vi/Bk0S0jZEzRM/hqdefault.jpg" width="720" alt="Watch on YouTube">
@@ -26,10 +34,6 @@
 </a>
 
 </div>
-
-## GameDev-focused fork of the Plasticity Blender Bridge.
-
-Unofficial fork that regularly incorporates the latest improvements from the official Plasticity Blender add-on, and adds workflow tools / improvements for fast real-time asset prep: topology/edge control, UV workflow utilities, and export-oriented helpers.
 
 ## Upstreamed into the official add-on workflow
 
