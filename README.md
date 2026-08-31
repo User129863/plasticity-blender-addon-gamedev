@@ -180,13 +180,3 @@ https://github.com/user-attachments/assets/bed96ba8-e440-4f40-ba1c-5b3c95cbf68b
 https://github.com/user-attachments/assets/6e29f8ec-b462-414b-9091-e373f7d5f232
 
 https://github.com/user-attachments/assets/e524569c-2892-42ee-a86b-ee753772e68e
-
-## Painted Metal workflow (development build)
-
-- `UV / Material / Texture Tools` is now split into focused `UV Tools` and `Materials` tabs. Material removal lives under Materials.
-- The first supported material profile is `Painted Metal`, mirroring the authoritative Unreal `MI_Painted_Metal` template.
-- `Create Painted Metal Setup` creates one Blender preview material and, when Ucupaint is enabled, one linear RGB authoring channel with Paint, Rust, and Dirt layers over a Metal background.
-- The packed mask uses discrete hierarchical IDs: Paint `111`, Rust `110`, Dirt `100`, Metal `000`. This matches the verified Unreal layer-blend order; the channels are not independent effect masks.
-- `Bake / Refresh RGB Mask` opens Ucupaint's native Bake All Channels dialog. Sending is blocked with a clear error until the named packed target has been baked.
-- `Send Selected to Unreal` sends the mesh and mask together, creates or updates a sibling `MI_<Name>` derived from `MI_Painted_Metal`, assigns the mask to blend indices 0–2, and assigns that MI to the mesh's single material slot.
-- Re-sends update only the three owned mask overrides. Other artist-authored instance overrides are preserved.
